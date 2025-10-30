@@ -8,18 +8,18 @@ const nodemailer = require("nodemailer");
 const { initializeModels, setupAssociations } = require("./models");
 const { AdminUser } = require("./models");
 const { errorHandler } = require("./middleware/errorHandler");
-const { initializeChatbot } = require("./controllers/chatbotController");
 
-// Import all routes
+// Import active routes only
 const adminUserRoutes = require("./routes/adminUserRoutes");
-const inquiryRoutes = require("./routes/inquiryRoutes");
-const projectRoutes = require("./routes/projectRoutes");
-const documentRoutes = require("./routes/documentRoutes");
-const auditTrailRoutes = require("./routes/auditTrailRoutes");
-const reportRoutes = require("./routes/reportRoutes");
-const analyticsRoutes = require("./routes/analyticsRoutes");
-const chatbotRoutes = require("./routes/chatbotRoutes");
-const testimonyRoutes = require("./routes/testimonyRoutes");
+const publicUserRoutes = require("./routes/publicUserRoutes");
+const tokenRoutes = require("./routes/tokenRoutes");
+const chatUnlockRoutes = require("./routes/chatUnlockRoutes");
+const premiumVerificationRoutes = require("./routes/premiumVerificationRoutes");
+const marketItemRoutes = require("./routes/marketItemRoutes");
+const lookingForPostRoutes = require("./routes/lookingForPostRoutes");
+const favouriteRoutes = require("./routes/favouriteRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 
 const app = express();
 
@@ -27,7 +27,6 @@ const app = express();
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cors());
-
 
 // Static file serving
 const profilesUploadPath = path.join(__dirname, "..", "uploads", "profiles");
@@ -37,11 +36,36 @@ const inquiriesUploadPath = path.join(__dirname, "..", "uploads", "inquiries");
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
-console.log("  - Profiles:", profilesUploadPath, "- Exists:", fs.existsSync(profilesUploadPath));
-console.log("  - Documents:", documentsUploadPath, "- Exists:", fs.existsSync(documentsUploadPath));
-console.log("  - Projects:", projectsUploadPath, "- Exists:", fs.existsSync(projectsUploadPath));
-console.log("  - Inquiries:", inquiriesUploadPath, "- Exists:", fs.existsSync(inquiriesUploadPath));
-console.log("  - Misc:", miscUploadPath, "- Exists:", fs.existsSync(miscUploadPath));
+console.log(
+  "  - Profiles:",
+  profilesUploadPath,
+  "- Exists:",
+  fs.existsSync(profilesUploadPath)
+);
+console.log(
+  "  - Documents:",
+  documentsUploadPath,
+  "- Exists:",
+  fs.existsSync(documentsUploadPath)
+);
+console.log(
+  "  - Projects:",
+  projectsUploadPath,
+  "- Exists:",
+  fs.existsSync(projectsUploadPath)
+);
+console.log(
+  "  - Inquiries:",
+  inquiriesUploadPath,
+  "- Exists:",
+  fs.existsSync(inquiriesUploadPath)
+);
+console.log(
+  "  - Misc:",
+  miscUploadPath,
+  "- Exists:",
+  fs.existsSync(miscUploadPath)
+);
 
 // Serve static files
 app.use("/uploads/profiles", express.static(profilesUploadPath));
@@ -53,84 +77,69 @@ app.use("/uploads/misc", express.static(miscUploadPath));
 // API routes
 console.log("🔗 Registering API routes...");
 
-// Public routes (no authentication required)
-const { getPublicProjects, getPublicProjectById } = require("./controllers/projectController");
-app.get("/api/public-projects", getPublicProjects);
-console.log("✅ /api/public-projects route registered (public)");
-app.get("/api/public-projects/:id", getPublicProjectById);
-console.log("✅ /api/public-projects/:id route registered (public)");
-
-app.use("/api/testimonies", testimonyRoutes);
-console.log("✅ /api/testimonies route registered");
-
 app.use("/api/admin-users", adminUserRoutes);
 console.log("✅ /api/admin-users route registered");
 
-app.use("/api/inquiries", inquiryRoutes);
-console.log("✅ /api/inquiries route registered");
+app.use("/api/public", publicUserRoutes);
+console.log("✅ /api/public route registered");
 
-app.use("/api/projects", projectRoutes);
-console.log("✅ /api/projects route registered");
+// TuVibe routes
+app.use("/api/tokens", tokenRoutes);
+app.use("/api/chat", chatUnlockRoutes);
+app.use("/api/verification", premiumVerificationRoutes);
+app.use("/api/market", marketItemRoutes);
+app.use("/api/posts", lookingForPostRoutes);
+app.use("/api/favourites", favouriteRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/notifications", notificationRoutes);
+console.log("✅ TuVibe routes registered");
 
-app.use("/api/documents", documentRoutes);
-console.log("✅ /api/documents route registered");
-
-app.use("/api/audit-trail", auditTrailRoutes);
-console.log("✅ /api/audit-trail route registered");
-
-app.use("/api/reports", reportRoutes);
-console.log("✅ /api/reports route registered");
-
-app.use("/api/analytics", analyticsRoutes);
-console.log("✅ /api/analytics route registered");
-
-app.use("/api/chatbot", chatbotRoutes);
-console.log("✅ /api/chatbot route registered");
+// Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 
 // Forgot password endpoint
 app.post("/api/auth/forgot", async (req, res) => {
   try {
     const { Email } = req.body;
-    
+
     if (!Email) {
       return res.status(400).json({
         success: false,
-        error: "Email is required"
+        error: "Email is required",
       });
     }
-    
+
     // Find admin by email
     const admin = await AdminUser.findOne({ where: { email: Email } });
     if (!admin) {
       return res.status(404).json({
         success: false,
-        error: "No account found with this email address"
+        error: "No account found with this email address",
       });
     }
-    
+
     // Generate a new random password (8 characters)
     const newPassword = Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
+
     // Update admin password
     await admin.update({ password: hashedPassword });
-    
+
     // Send email with new password
     try {
       // Create transporter (using Gmail SMTP)
       const transporter = nodemailer.createTransport({
-        service: 'gmail',
+        service: "gmail",
         auth: {
-          user: 'ongogokennedy89@gmail.com', // Your Gmail
-          pass: 'mnfj zxio cgxw zefv'     // Your Gmail App Password
-        }
+          user: "ongogokennedy89@gmail.com", // Your Gmail
+          pass: "mnfj zxio cgxw zefv", // Your Gmail App Password
+        },
       });
-      
+
       // Email content
       const mailOptions = {
-        from: 'ongogokennedy89@gmail.com', // Your Gmail
+        from: "ongogokennedy89@gmail.com", // Your Gmail
         to: Email,
-        subject: 'Password Reset - Mwalimu Hope Foundation Admin Portal',
+        subject: "Password Reset - Mwalimu Hope Foundation Admin Portal",
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #333;">Password Reset Request</h2>
@@ -146,25 +155,24 @@ app.post("/api/auth/forgot", async (req, res) => {
             <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
             <p style="color: #666; font-size: 12px;">This is an automated message from Mwalimu Hope Foundation Admin Portal.</p>
           </div>
-        `
+        `,
       };
-      
+
       // Send email
       await transporter.sendMail(mailOptions);
-      
     } catch (emailError) {
       // Don't fail the request if email fails, just log it silently
     }
-    
+
     res.status(200).json({
       success: true,
-      message: "Password reset email sent"
+      message: "Password reset email sent",
     });
   } catch (error) {
     console.error("Error in forgot password:", error);
     res.status(500).json({
       success: false,
-      error: "Error processing password reset"
+      error: "Error processing password reset",
     });
   }
 });
@@ -220,7 +228,7 @@ const createUploadDirectories = () => {
 const initializeApp = async () => {
   try {
     console.log("🚀 Initializing application...");
-    
+
     // Create upload directories
     createUploadDirectories();
     console.log("✅ Upload directories ready");
@@ -228,15 +236,13 @@ const initializeApp = async () => {
     // Initialize database models
     await initializeModels();
     console.log("✅ Database models initialized");
-    
+
     // Setup model associations
     setupAssociations();
     console.log("✅ Model associations configured");
-    
-    // Initialize chatbot
-    initializeChatbot();
-    console.log("✅ Chatbot initialized");
-    
+
+    // Chatbot removed
+
     console.log("✅ Application initialized successfully");
     return true;
   } catch (error) {

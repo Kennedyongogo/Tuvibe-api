@@ -1,35 +1,48 @@
 const { sequelize } = require("../config/database");
 
-// Import all models
+// Import TuVibe models
 const AdminUser = require("./adminUser")(sequelize);
-const Inquiry = require("./inquiry")(sequelize);
-const Project = require("./project")(sequelize);
-const Document = require("./document")(sequelize);
-const AuditTrail = require("./auditTrail")(sequelize);
-const Testimony = require("./testimony")(sequelize);
+const PublicUser = require("./publicUser")(sequelize);
+const TokenTransaction = require("./tokenTransaction")(sequelize);
+const ChatUnlock = require("./chatUnlock")(sequelize);
+const PremiumVerification = require("./premiumVerification")(sequelize);
+const MarketItem = require("./marketItem")(sequelize);
+const LookingForPost = require("./lookingForPost")(sequelize);
+const Favourite = require("./favourite")(sequelize);
+const Payment = require("./payment")(sequelize);
+const Notification = require("./notification")(sequelize);
 
 const models = {
   AdminUser,
-  Inquiry,
-  Project,
-  Document,
-  AuditTrail,
-  Testimony,
+  PublicUser,
+  TokenTransaction,
+  ChatUnlock,
+  PremiumVerification,
+  MarketItem,
+  LookingForPost,
+  Favourite,
+  Payment,
+  Notification,
 };
 
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
     console.log("🔄 Creating/updating tables...");
-
-    // Use alter: false to prevent schema conflicts in production
     console.log("📋 Syncing tables...");
-    await AdminUser.sync({ force: false, alter: false  });
-    await Inquiry.sync({ force: false, alter: false });
-    await Project.sync({ force: false, alter: false });
-    await Document.sync({ force: false, alter: false });
-    await AuditTrail.sync({ force: false, alter: false });
-    await Testimony.sync({ force: false, alter: false });
+
+    await AdminUser.sync({ force: false, alter: false });
+    await PublicUser.sync({ force: false, alter: false });
+
+    await PremiumVerification.sync({ force: false, alter: false });
+    await MarketItem.sync({ force: false, alter: false });
+
+    await TokenTransaction.sync({ force: false, alter: false });
+    await ChatUnlock.sync({ force: false, alter: false });
+    await LookingForPost.sync({ force: false, alter: false });
+    await Favourite.sync({ force: false, alter: false });
+    await Payment.sync({ force: false, alter: false });
+    await Notification.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -47,54 +60,102 @@ const initializeModels = async () => {
 
 const setupAssociations = () => {
   try {
-    // AdminUser → Project (1:Many for created_by)
-    models.AdminUser.hasMany(models.Project, {
-      foreignKey: "created_by",
-      as: "createdProjects",
+    // PublicUser ↔ TokenTransaction
+    models.PublicUser.hasMany(models.TokenTransaction, {
+      foreignKey: "public_user_id",
+      as: "tokenTransactions",
     });
-    models.Project.belongsTo(models.AdminUser, {
+    models.TokenTransaction.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "user",
+    });
+
+    // PublicUser ↔ ChatUnlock (initiated)
+    models.PublicUser.hasMany(models.ChatUnlock, {
+      foreignKey: "public_user_id",
+      as: "initiatedChats",
+    });
+    models.ChatUnlock.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "initiator",
+    });
+    // PublicUser ↔ ChatUnlock (target)
+    models.ChatUnlock.belongsTo(models.PublicUser, {
+      foreignKey: "target_user_id",
+      as: "target",
+    });
+
+    // PublicUser ↔ PremiumVerification
+    models.PublicUser.hasOne(models.PremiumVerification, {
+      foreignKey: "public_user_id",
+      as: "premiumVerification",
+    });
+    models.PremiumVerification.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "publicUser",
+    });
+    models.PremiumVerification.belongsTo(models.AdminUser, {
+      foreignKey: "admin_id",
+      as: "admin",
+    });
+    models.AdminUser.hasMany(models.PremiumVerification, {
+      foreignKey: "admin_id",
+      as: "handledVerifications",
+    });
+
+    // AdminUser ↔ MarketItem
+    models.AdminUser.hasMany(models.MarketItem, {
+      foreignKey: "created_by",
+      as: "marketItems",
+    });
+    models.MarketItem.belongsTo(models.AdminUser, {
       foreignKey: "created_by",
       as: "creator",
     });
 
-    // AdminUser → Project (1:Many for assigned_by)
-    models.AdminUser.hasMany(models.Project, {
-      foreignKey: "assigned_by",
-      as: "assignedProjects",
+    // PublicUser ↔ LookingForPost
+    models.PublicUser.hasMany(models.LookingForPost, {
+      foreignKey: "public_user_id",
+      as: "lookingForPosts",
     });
-    models.Project.belongsTo(models.AdminUser, {
-      foreignKey: "assigned_by",
-      as: "assigner",
-    });
-
-    // AdminUser → Project (1:Many for assigned_to)
-    models.AdminUser.hasMany(models.Project, {
-      foreignKey: "assigned_to",
-      as: "assignedToProjects",
-    });
-    models.Project.belongsTo(models.AdminUser, {
-      foreignKey: "assigned_to",
-      as: "assignee",
+    models.LookingForPost.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "author",
     });
 
-    // AdminUser → Document (1:Many for uploaded_by)
-    models.AdminUser.hasMany(models.Document, {
-      foreignKey: "uploaded_by",
-      as: "uploadedDocuments",
+    // PublicUser ↔ Favourite
+    models.PublicUser.hasMany(models.Favourite, {
+      foreignKey: "public_user_id",
+      as: "favourites",
     });
-    models.Document.belongsTo(models.AdminUser, {
-      foreignKey: "uploaded_by",
-      as: "uploader",
+    models.Favourite.belongsTo(models.PublicUser, {
+      foreignKey: "favourite_user_id",
+      as: "favouritedUser",
+    });
+    // Also link favourite record back to owner
+    models.Favourite.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "owner",
     });
 
-    // AdminUser → AuditTrail (1:Many)
-    models.AdminUser.hasMany(models.AuditTrail, {
-      foreignKey: "user_id",
-      as: "auditLogs",
+    // PublicUser ↔ Payment
+    models.PublicUser.hasMany(models.Payment, {
+      foreignKey: "public_user_id",
+      as: "payments",
     });
-    models.AuditTrail.belongsTo(models.AdminUser, {
-      foreignKey: "user_id",
-      as: "user",
+    models.Payment.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "payer",
+    });
+
+    // PublicUser ↔ Notification
+    models.PublicUser.hasMany(models.Notification, {
+      foreignKey: "public_user_id",
+      as: "notifications",
+    });
+    models.Notification.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "recipient",
     });
 
     console.log("✅ All associations set up successfully");
