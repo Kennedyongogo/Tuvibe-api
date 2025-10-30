@@ -33,6 +33,11 @@ module.exports = (sequelize) => {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
       },
+      tag: {
+        type: DataTypes.ENUM("hot_deals", "weekend_picks", "none"),
+        allowNull: false,
+        defaultValue: "none",
+      },
       created_by: {
         type: DataTypes.UUID,
         allowNull: false,

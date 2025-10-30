@@ -197,3 +197,91 @@ exports.getWallet = async (req, res) => {
       .json({ success: false, message: "Failed to fetch wallet" });
   }
 };
+
+// Public listing with filters and guest gating
+exports.list = async (req, res) => {
+  try {
+    const {
+      city,
+      category,
+      isVerified,
+      online,
+      q,
+      page = 1,
+      pageSize = 20,
+    } = req.query;
+    const where = {};
+    if (city) where.city = city;
+    if (category) where.category = category;
+    if (isVerified !== undefined) where.isVerified = isVerified === "true";
+    if (online !== undefined) where.is_online = online === "true";
+    if (q) {
+      where[Op.or] = [
+        { name: { [Op.iLike]: `%${q}%` } },
+        { city: { [Op.iLike]: `%${q}%` } },
+      ];
+    }
+
+    // Guest gating: guests cannot view premium categories or verified users list
+    if (!req.publicUserId) {
+      where.category = where.category || { [Op.eq]: "Regular" };
+      where.isVerified = false;
+    }
+
+    const limit = Math.min(Number(pageSize) || 20, 50);
+    const offset = (Number(page) - 1) * limit;
+
+    const rows = await PublicUser.findAll({
+      where,
+      attributes: {
+        exclude: ["password", "otp", "phone"], // mask phone in listings
+      },
+      order: [
+        ["isVerified", "DESC"],
+        ["boost_score", "DESC"],
+        ["createdAt", "DESC"],
+      ],
+      limit,
+      offset,
+    });
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error("users list error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to list users" });
+  }
+};
+
+// Featured users for homepage carousel
+exports.featured = async (req, res) => {
+  try {
+    const now = new Date();
+    const where = {
+      [Op.or]: [
+        { is_featured_until: { [Op.gt]: now } },
+        { boost_score: { [Op.gt]: 0 } },
+        { isVerified: true },
+      ],
+    };
+    // Guest gating: exclude premium categories for guests
+    if (!req.publicUserId) {
+      where.category = { [Op.eq]: "Regular" };
+    }
+    const rows = await PublicUser.findAll({
+      where,
+      attributes: { exclude: ["password", "otp", "phone"] },
+      order: [
+        ["is_featured_until", "DESC"],
+        ["boost_score", "DESC"],
+      ],
+      limit: 20,
+    });
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error("users featured error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch featured users" });
+  }
+};

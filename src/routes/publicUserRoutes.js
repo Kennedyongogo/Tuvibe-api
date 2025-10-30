@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const ctrl = require("../controllers/publicUserController");
-const { authenticatePublic } = require("../middleware/publicAuth");
+const {
+  authenticatePublic,
+  optionalPublicAuth,
+} = require("../middleware/publicAuth");
 
 // Auth
 router.post("/register", ctrl.register);
@@ -15,5 +18,9 @@ router.put("/me", authenticatePublic, ctrl.updateMe);
 
 // Wallet
 router.get("/wallet", authenticatePublic, ctrl.getWallet);
+
+// Browse & Featured (guest-friendly)
+router.get("/", optionalPublicAuth, ctrl.list);
+router.get("/featured", optionalPublicAuth, ctrl.featured);
 
 module.exports = router;

@@ -52,6 +52,22 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: true,
       },
+      last_seen_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      is_online: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+      },
+      boost_score: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+      },
+      is_featured_until: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
       isVerified: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,

@@ -1,8 +1,14 @@
 const { MarketItem, AdminUser } = require("../models");
 
-exports.list = async (_req, res) => {
+exports.list = async (req, res) => {
   try {
-    const rows = await MarketItem.findAll({ order: [["createdAt", "DESC"]] });
+    const where = {};
+    const { tag } = req.query;
+    if (tag) where.tag = tag;
+    const rows = await MarketItem.findAll({
+      where,
+      order: [["createdAt", "DESC"]],
+    });
     return res.json({ success: true, data: rows });
   } catch (err) {
     console.error("market list error:", err);
@@ -14,8 +20,15 @@ exports.list = async (_req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { title, description, price, image, whatsapp_number, is_featured } =
-      req.body;
+    const {
+      title,
+      description,
+      price,
+      image,
+      whatsapp_number,
+      is_featured,
+      tag,
+    } = req.body;
     if (!title || !price)
       return res
         .status(400)
@@ -28,6 +41,7 @@ exports.create = async (req, res) => {
       whatsapp_number,
       is_featured: !!is_featured,
       created_by: req.userId,
+      tag: tag || "none",
     });
     return res.status(201).json({ success: true, data: row });
   } catch (err) {
@@ -53,6 +67,7 @@ exports.update = async (req, res) => {
       "image",
       "whatsapp_number",
       "is_featured",
+      "tag",
     ];
     const updates = {};
     for (const k of allowed)

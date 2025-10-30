@@ -13,11 +13,12 @@ const {
   toggleActiveStatus,
   getDashboardStats,
   deleteAdmin,
+  analytics,
 } = require("../controllers/adminUserController");
-const { 
-  authenticateAdmin, 
+const {
+  authenticateAdmin,
   requireSuperAdmin,
-  requireAdminOrHigher 
+  requireAdminOrHigher,
 } = require("../middleware/auth");
 const {
   uploadProfileImage,
@@ -41,6 +42,7 @@ router.post(
 );
 
 router.get("/dashboard/stats", authenticateAdmin, getDashboardStats);
+router.get("/dashboard/analytics", authenticateAdmin, analytics);
 router.get("/", authenticateAdmin, getAllAdmins);
 router.get("/:id", authenticateAdmin, getAdminById);
 
@@ -54,7 +56,12 @@ router.put(
 
 router.put("/:id/password", authenticateAdmin, changePassword);
 router.put("/:id/role", authenticateAdmin, requireSuperAdmin, updateRole);
-router.put("/:id/toggle-status", authenticateAdmin, requireSuperAdmin, toggleActiveStatus);
+router.put(
+  "/:id/toggle-status",
+  authenticateAdmin,
+  requireSuperAdmin,
+  toggleActiveStatus
+);
 
 router.delete("/:id", authenticateAdmin, requireSuperAdmin, deleteAdmin);
 

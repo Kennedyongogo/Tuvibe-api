@@ -51,7 +51,12 @@ exports.unlock = async (req, res) => {
         token_cost: cost,
         status: "success",
       });
-      return res.json({ success: true, data: { whatsapp: target.phone } });
+      const phone = (target.phone || "").replace(/[^\d+]/g, "");
+      const wa = `https://wa.me/${phone.replace(/^\+/, "")}`;
+      return res.json({
+        success: true,
+        data: { phone: target.phone, whatsapp_link: wa },
+      });
     } catch (err) {
       await ChatUnlock.create({
         public_user_id: req.publicUserId,

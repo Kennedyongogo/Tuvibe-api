@@ -1,3 +1,32 @@
+const {
+  PublicUser,
+  TokenTransaction,
+  ChatUnlock,
+  MarketItem,
+} = require("../models");
+
+// Basic analytics for dashboard
+exports.analytics = async (_req, res) => {
+  try {
+    const [usersCount, premiumCount, tokensSum, unlocksCount, itemsCount] =
+      await Promise.all([
+        PublicUser.count(),
+        PublicUser.count({ where: { isVerified: true } }),
+        TokenTransaction.sum("amount").then((v) => Number(v || 0)),
+        ChatUnlock.count({ where: { status: "success" } }),
+        MarketItem.count(),
+      ]);
+    return res.json({
+      success: true,
+      data: { usersCount, premiumCount, tokensSum, unlocksCount, itemsCount },
+    });
+  } catch (err) {
+    console.error("analytics error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch analytics" });
+  }
+};
 const { AdminUser, Project, Inquiry, Document } = require("../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -17,8 +46,20 @@ const {
 // Create admin user
 const createAdmin = async (req, res) => {
   try {
-    const { full_name, email, password, phone, position, description, role, isActive, whatsapp_link, google_link, twitter_link, facebook_link } =
-      req.body;
+    const {
+      full_name,
+      email,
+      password,
+      phone,
+      position,
+      description,
+      role,
+      isActive,
+      whatsapp_link,
+      google_link,
+      twitter_link,
+      facebook_link,
+    } = req.body;
 
     // Check if admin already exists
     const existingAdmin = await AdminUser.findOne({ where: { email } });
@@ -167,7 +208,14 @@ const login = async (req, res) => {
 // Get all admins
 const getAllAdmins = async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, search, sortBy = "createdAt", sortOrder = "DESC" } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      role,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "DESC",
+    } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -251,7 +299,20 @@ const getAdminById = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { id } = req.params;
-    const { full_name, email, phone, position, description, role, isActive, profile_image_path, whatsapp_link, google_link, twitter_link, facebook_link } = req.body;
+    const {
+      full_name,
+      email,
+      phone,
+      position,
+      description,
+      role,
+      isActive,
+      profile_image_path,
+      whatsapp_link,
+      google_link,
+      twitter_link,
+      facebook_link,
+    } = req.body;
 
     const admin = await AdminUser.findByPk(id);
     if (!admin) {
@@ -274,7 +335,7 @@ const updateProfile = async (req, res) => {
 
     // Handle profile image
     let profileImagePath = admin.profile_image; // Keep existing by default
-    
+
     if (req.file) {
       // New file uploaded - convert to relative path
       profileImagePath = convertToRelativePath(req.file.path);
@@ -293,10 +354,22 @@ const updateProfile = async (req, res) => {
       role: role || admin.role,
       isActive: isActive !== undefined ? isActive : admin.isActive,
       profile_image: profileImagePath,
-      whatsapp_link: whatsapp_link !== undefined ? (whatsapp_link?.trim() || null) : admin.whatsapp_link,
-      google_link: google_link !== undefined ? (google_link?.trim() || null) : admin.google_link,
-      twitter_link: twitter_link !== undefined ? (twitter_link?.trim() || null) : admin.twitter_link,
-      facebook_link: facebook_link !== undefined ? (facebook_link?.trim() || null) : admin.facebook_link,
+      whatsapp_link:
+        whatsapp_link !== undefined
+          ? whatsapp_link?.trim() || null
+          : admin.whatsapp_link,
+      google_link:
+        google_link !== undefined
+          ? google_link?.trim() || null
+          : admin.google_link,
+      twitter_link:
+        twitter_link !== undefined
+          ? twitter_link?.trim() || null
+          : admin.twitter_link,
+      facebook_link:
+        facebook_link !== undefined
+          ? facebook_link?.trim() || null
+          : admin.facebook_link,
     };
 
     await admin.update(updateData);
@@ -352,7 +425,10 @@ const changePassword = async (req, res) => {
     }
 
     // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, admin.password);
+    const isPasswordValid = await bcrypt.compare(
+      currentPassword,
+      admin.password
+    );
     if (!isPasswordValid) {
       // Log failed password change attempt
       await logAudit({
@@ -476,12 +552,16 @@ const toggleActiveStatus = async (req, res) => {
       oldStatus ? "active" : "inactive",
       admin.isActive ? "active" : "inactive",
       req,
-      `${admin.isActive ? "Activated" : "Deactivated"} admin: ${admin.full_name}`
+      `${admin.isActive ? "Activated" : "Deactivated"} admin: ${
+        admin.full_name
+      }`
     );
 
     res.status(200).json({
       success: true,
-      message: `Admin ${admin.isActive ? "activated" : "deactivated"} successfully`,
+      message: `Admin ${
+        admin.isActive ? "activated" : "deactivated"
+      } successfully`,
       data: {
         id: admin.id,
         full_name: admin.full_name,
@@ -547,7 +627,14 @@ const deleteAdmin = async (req, res) => {
 // Get all admins (public - no auth required)
 const getPublicAdmins = async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, search, sortBy = "createdAt", sortOrder = "DESC" } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      role,
+      search,
+      sortBy = "createdAt",
+      sortOrder = "DESC",
+    } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -570,7 +657,19 @@ const getPublicAdmins = async (req, res) => {
 
     const { count, rows } = await AdminUser.findAndCountAll({
       where: whereClause,
-      attributes: ["id", "full_name", "position", "description", "role", "profile_image", "whatsapp_link", "google_link", "twitter_link", "facebook_link", "createdAt"],
+      attributes: [
+        "id",
+        "full_name",
+        "position",
+        "description",
+        "role",
+        "profile_image",
+        "whatsapp_link",
+        "google_link",
+        "twitter_link",
+        "facebook_link",
+        "createdAt",
+      ],
       limit: limitNum,
       offset: offset,
       order: [[sortBy, sortOrder]],
@@ -603,7 +702,19 @@ const getPublicAdminById = async (req, res) => {
 
     const admin = await AdminUser.findOne({
       where: { id, isActive: true },
-      attributes: ["id", "full_name", "position", "description", "role", "profile_image", "whatsapp_link", "google_link", "twitter_link", "facebook_link", "createdAt"],
+      attributes: [
+        "id",
+        "full_name",
+        "position",
+        "description",
+        "role",
+        "profile_image",
+        "whatsapp_link",
+        "google_link",
+        "twitter_link",
+        "facebook_link",
+        "createdAt",
+      ],
     });
 
     if (!admin) {
@@ -633,7 +744,7 @@ const getDashboardStats = async (req, res) => {
     // Get counts
     const totalAdmins = await AdminUser.count();
     const activeAdmins = await AdminUser.count({ where: { isActive: true } });
-    
+
     const totalProjects = await Project.count();
     const projectsByStatus = await Project.findAll({
       attributes: [
@@ -717,4 +828,5 @@ module.exports = {
   toggleActiveStatus,
   deleteAdmin,
   getDashboardStats,
+  analytics: exports.analytics,
 };
