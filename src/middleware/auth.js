@@ -87,9 +87,9 @@ exports.optionalAuth = async (req, res, next) => {
   }
 };
 
-// Check if admin has super-admin role
+// Check if admin has superadmin role
 exports.requireSuperAdmin = (req, res, next) => {
-  if (req.userType !== "admin" || req.adminRole !== "super-admin") {
+  if (req.userType !== "admin" || req.adminRole !== "superadmin") {
     return res.status(403).json({
       success: false,
       message: "Access denied, super-admin privileges required",
@@ -98,11 +98,11 @@ exports.requireSuperAdmin = (req, res, next) => {
   next();
 };
 
-// Check if admin has admin role (admin or super-admin)
+// Check if admin has admin role (moderator or superadmin)
 exports.requireAdmin = (req, res, next) => {
   if (
     req.userType !== "admin" ||
-    (req.adminRole !== "admin" && req.adminRole !== "super-admin")
+    (req.adminRole !== "moderator" && req.adminRole !== "superadmin")
   ) {
     return res.status(403).json({
       success: false,
@@ -112,7 +112,7 @@ exports.requireAdmin = (req, res, next) => {
   next();
 };
 
-// Check if admin has any role except regular user
+// Check if admin has any admin role
 exports.requireAdminOrHigher = (req, res, next) => {
   if (req.userType !== "admin") {
     return res.status(403).json({
@@ -120,14 +120,7 @@ exports.requireAdminOrHigher = (req, res, next) => {
       message: "Access denied, admin access required",
     });
   }
-  
-  if (req.adminRole === "regular user") {
-    return res.status(403).json({
-      success: false,
-      message: "Access denied, elevated privileges required",
-    });
-  }
-  
+
   next();
 };
 

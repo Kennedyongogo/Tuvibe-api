@@ -87,7 +87,7 @@ const createAdmin = async (req, res) => {
       phone,
       position,
       description,
-      role: role || "super-admin",
+      role: role || "superadmin",
       isActive: isActive !== undefined ? isActive : true,
       profile_image: profileImagePath,
       whatsapp_link: whatsapp_link?.trim() || null,
