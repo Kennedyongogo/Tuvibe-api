@@ -29,7 +29,7 @@ exports.authenticateAdmin = async (req, res, next) => {
       attributes: { exclude: ["password"] },
     });
 
-    if (!admin || !admin.isActive) {
+    if (!admin || (admin.isActive !== undefined && !admin.isActive)) {
       return res.status(403).json({
         success: false,
         message: "Access denied, invalid or inactive admin",
@@ -72,7 +72,7 @@ exports.optionalAuth = async (req, res, next) => {
         attributes: { exclude: ["password"] },
       });
 
-      if (admin && admin.isActive) {
+      if (admin && (admin.isActive === undefined || admin.isActive)) {
         req.userId = admin.id;
         req.user = admin;
         req.userType = "admin";
@@ -161,14 +161,14 @@ exports.rateLimit = (maxRequests = 100, windowMs = 60000) => {
   return (req, res, next) => {
     const key = req.userId || req.ip;
     const now = Date.now();
-    
+
     if (!requestCounts.has(key)) {
       requestCounts.set(key, { count: 1, resetTime: now + windowMs });
       return next();
     }
 
     const userData = requestCounts.get(key);
-    
+
     if (now > userData.resetTime) {
       userData.count = 1;
       userData.resetTime = now + windowMs;

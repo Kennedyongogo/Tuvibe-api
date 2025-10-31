@@ -16,6 +16,10 @@ const {
   analytics,
 } = require("../controllers/adminUserController");
 const {
+  adminList,
+  adminGetById,
+} = require("../controllers/publicUserController");
+const {
   authenticateAdmin,
   requireSuperAdmin,
   requireAdminOrHigher,
@@ -43,6 +47,8 @@ router.post(
 
 router.get("/dashboard/stats", authenticateAdmin, getDashboardStats);
 router.get("/dashboard/analytics", authenticateAdmin, analytics);
+router.get("/public-users", authenticateAdmin, adminList);
+router.get("/public-users/:id", authenticateAdmin, adminGetById);
 router.get("/", authenticateAdmin, getAllAdmins);
 router.get("/:id", authenticateAdmin, getAdminById);
 

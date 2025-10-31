@@ -5,6 +5,10 @@ const {
   authenticatePublic,
   optionalPublicAuth,
 } = require("../middleware/publicAuth");
+const {
+  uploadProfileImage,
+  handleUploadError,
+} = require("../middleware/upload");
 
 // Auth
 router.post("/register", ctrl.register);
@@ -14,7 +18,13 @@ router.post("/verify-otp", ctrl.verifyOtp);
 
 // Profile
 router.get("/me", authenticatePublic, ctrl.getMe);
-router.put("/me", authenticatePublic, ctrl.updateMe);
+router.put(
+  "/me",
+  authenticatePublic,
+  uploadProfileImage,
+  handleUploadError,
+  ctrl.updateMe
+);
 
 // Wallet
 router.get("/wallet", authenticatePublic, ctrl.getWallet);

@@ -12,8 +12,18 @@ const signPublicJwt = (userId) => {
 
 exports.register = async (req, res) => {
   try {
-    const { name, gender, age, city, category, phone, email, password } =
-      req.body;
+    const {
+      name,
+      gender,
+      age,
+      city,
+      category,
+      phone,
+      email,
+      password,
+      latitude,
+      longitude,
+    } = req.body;
     if (!name || !phone || !email || !password) {
       return res
         .status(400)
@@ -37,6 +47,8 @@ exports.register = async (req, res) => {
       phone,
       email,
       password: hashed,
+      latitude,
+      longitude,
     });
     const token = signPublicJwt(user.id);
     return res.status(201).json({
@@ -161,10 +173,81 @@ exports.updateMe = async (req, res) => {
       "category",
       "bio",
       "photo",
+      "email",
+      "phone",
+      "latitude",
+      "longitude",
     ];
     const updates = {};
-    for (const key of allowed)
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+
+    // Handle file upload if profile_image is provided
+    if (req.file) {
+      // File path relative to uploads folder (e.g., "profiles/filename.jpg")
+      const photoPath = `profiles/${req.file.filename}`;
+      updates.photo = photoPath;
+    }
+
+    // Check for email/phone uniqueness if they're being updated
+    if (req.body.email) {
+      const existingUser = await PublicUser.findOne({
+        where: {
+          email: req.body.email,
+          id: { [Op.ne]: req.publicUserId },
+        },
+      });
+      if (existingUser) {
+        return res
+          .status(409)
+          .json({ success: false, message: "Email already in use" });
+      }
+    }
+
+    if (req.body.phone) {
+      const existingUser = await PublicUser.findOne({
+        where: {
+          phone: req.body.phone,
+          id: { [Op.ne]: req.publicUserId },
+        },
+      });
+      if (existingUser) {
+        return res
+          .status(409)
+          .json({ success: false, message: "Phone number already in use" });
+      }
+    }
+
+    // Add fields from req.body (works for both JSON and form-data)
+    for (const key of allowed) {
+      if (
+        req.body[key] !== undefined &&
+        req.body[key] !== null &&
+        req.body[key] !== ""
+      ) {
+        if (key === "age") {
+          const ageValue = parseInt(req.body[key]);
+          if (!isNaN(ageValue) && ageValue > 0) {
+            updates[key] = ageValue;
+          }
+        } else if (key === "latitude" || key === "longitude") {
+          const coordValue = parseFloat(req.body[key]);
+          if (!isNaN(coordValue)) {
+            updates[key] = coordValue;
+          }
+        } else {
+          updates[key] = req.body[key];
+        }
+      }
+    }
+
+    // Check if there are any updates to make
+    if (Object.keys(updates).length === 0) {
+      // No updates to make, just return current user
+      const user = await PublicUser.findByPk(req.publicUserId, {
+        attributes: { exclude: ["password", "otp"] },
+      });
+      return res.json({ success: true, data: user });
+    }
+
     await PublicUser.update(updates, { where: { id: req.publicUserId } });
     const user = await PublicUser.findByPk(req.publicUserId, {
       attributes: { exclude: ["password", "otp"] },
@@ -172,9 +255,17 @@ exports.updateMe = async (req, res) => {
     return res.json({ success: true, data: user });
   } catch (err) {
     console.error("updateMe error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to update profile" });
+    console.error("Error details:", {
+      message: err.message,
+      stack: err.stack,
+      body: req.body,
+      file: req.file,
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update profile",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
   }
 };
 
@@ -283,5 +374,95 @@ exports.featured = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch featured users" });
+  }
+};
+
+// Admin endpoint to list all public users without restrictions
+exports.adminList = async (req, res) => {
+  try {
+    const {
+      city,
+      category,
+      isVerified,
+      online,
+      q,
+      page = 1,
+      pageSize = 10,
+    } = req.query;
+    const where = {};
+    if (city) where.city = city;
+    if (category) where.category = category;
+    if (isVerified !== undefined) where.isVerified = isVerified === "true";
+    if (online !== undefined) where.is_online = online === "true";
+    if (q) {
+      where[Op.or] = [
+        { name: { [Op.iLike]: `%${q}%` } },
+        { city: { [Op.iLike]: `%${q}%` } },
+        { email: { [Op.iLike]: `%${q}%` } },
+        { phone: { [Op.iLike]: `%${q}%` } },
+      ];
+    }
+
+    const limit = Math.min(Number(pageSize) || 10, 100);
+    const offset = (Number(page) - 1) * limit;
+
+    const { count, rows } = await PublicUser.findAndCountAll({
+      where,
+      attributes: {
+        exclude: ["password", "otp"], // Admin can see phone numbers
+      },
+      order: [
+        ["createdAt", "DESC"],
+        ["isVerified", "DESC"],
+        ["boost_score", "DESC"],
+      ],
+      limit,
+      offset,
+    });
+
+    return res.json({
+      success: true,
+      data: rows,
+      pagination: {
+        total: count,
+        page: Number(page),
+        pageSize: limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    });
+  } catch (err) {
+    console.error("admin list public users error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to list public users" });
+  }
+};
+
+// Admin endpoint to get a single public user by ID
+exports.adminGetById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await PublicUser.findByPk(id, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Public user not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: user,
+    });
+  } catch (err) {
+    console.error("admin get public user by id error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch public user",
+    });
   }
 };

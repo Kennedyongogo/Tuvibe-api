@@ -143,7 +143,7 @@ app.post("/api/auth/forgot", async (req, res) => {
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2 style="color: #333;">Password Reset Request</h2>
-            <p>Hello ${admin.full_name},</p>
+            <p>Hello ${admin.name},</p>
             <p>Your password has been reset for the Mwalimu Hope Foundation Admin Portal.</p>
             <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
               <h3 style="color: #666; margin-top: 0;">Your New Login Credentials:</h3>

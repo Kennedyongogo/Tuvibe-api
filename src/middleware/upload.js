@@ -64,11 +64,14 @@ const fileFilter = (req, file, cb) => {
     // Documents
     "application/pdf": ".pdf",
     "application/msword": ".doc",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      ".docx",
     "application/vnd.ms-excel": ".xls",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+      ".xlsx",
     "application/vnd.ms-powerpoint": ".ppt",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+      ".pptx",
     "text/plain": ".txt",
     "text/csv": ".csv",
   };
@@ -78,7 +81,9 @@ const fileFilter = (req, file, cb) => {
   } else {
     cb(
       new Error(
-        `Invalid file type: ${file.mimetype}. Allowed types: ${Object.values(allowedTypes).join(", ")}`
+        `Invalid file type: ${file.mimetype}. Allowed types: ${Object.values(
+          allowedTypes
+        ).join(", ")}`
       ),
       false
     );
@@ -94,8 +99,19 @@ const upload = multer({
   },
 });
 
-// Middleware for single profile picture upload
-const uploadProfileImage = upload.single("profile_image");
+// Middleware for single profile picture upload (optional - allows requests without files)
+const uploadProfileImage = (req, res, next) => {
+  // Only process multipart/form-data requests
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.single("profile_image")(req, res, next);
+  } else {
+    // For JSON requests, skip file upload processing
+    next();
+  }
+};
 
 // Middleware for single document upload
 const uploadDocument = upload.single("document");
@@ -176,19 +192,22 @@ const getFileType = (mimetype) => {
   if (mimetype === "application/pdf") return "pdf";
   if (
     mimetype === "application/msword" ||
-    mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    mimetype ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ) {
     return "word";
   }
   if (
     mimetype === "application/vnd.ms-excel" ||
-    mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    mimetype ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   ) {
     return "excel";
   }
   if (
     mimetype === "application/vnd.ms-powerpoint" ||
-    mimetype === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    mimetype ===
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
   ) {
     return "powerpoint";
   }
