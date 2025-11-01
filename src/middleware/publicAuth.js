@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const config = require("../config/config");
 const { PublicUser } = require("../models");
+const { Op } = require("sequelize");
 
 exports.authenticatePublic = async (req, res, next) => {
   const authHeader = req.header("Authorization");
@@ -25,6 +26,10 @@ exports.authenticatePublic = async (req, res, next) => {
         .status(401)
         .json({ success: false, message: "User not found" });
     }
+    
+    // Middleware: No last_seen_at updates here
+    // last_seen_at is only set on logout and cleared on login
+    
     req.publicUserId = user.id;
     req.publicUser = user;
     next();

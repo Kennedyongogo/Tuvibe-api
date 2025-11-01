@@ -9,6 +9,7 @@ const { authenticateAdmin } = require("../middleware/auth");
 
 // Public user
 router.post("/request", authenticatePublic, ctrl.requestVerification);
+router.get("/my-status", authenticatePublic, ctrl.getMyStatus);
 
 // Admin
 router.get("/", authenticateAdmin, ctrl.listRequests);

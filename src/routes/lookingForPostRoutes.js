@@ -4,6 +4,7 @@ const { authenticatePublic } = require("../middleware/publicAuth");
 const ctrl = require("../controllers/lookingForPostController");
 
 router.get("/mine", authenticatePublic, ctrl.listMine);
+router.get("/by-users", authenticatePublic, ctrl.listByUserIds);
 router.post("/", authenticatePublic, ctrl.create);
 router.put("/:id", authenticatePublic, ctrl.update);
 router.delete("/:id", authenticatePublic, ctrl.remove);

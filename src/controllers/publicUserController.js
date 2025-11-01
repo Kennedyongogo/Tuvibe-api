@@ -2,7 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
 const config = require("../config/config");
-const { PublicUser, TokenTransaction } = require("../models");
+const { PublicUser, TokenTransaction, ProfileView } = require("../models");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -38,6 +38,7 @@ exports.register = async (req, res) => {
         .json({ success: false, message: "Email or phone already in use" });
 
     const hashed = await bcrypt.hash(password, 10);
+    const now = new Date();
     const user = await PublicUser.create({
       name,
       gender,
@@ -49,6 +50,10 @@ exports.register = async (req, res) => {
       password: hashed,
       latitude,
       longitude,
+      logged_in_at: now,
+      logged_out_at: null,
+      is_online: true,
+      last_seen_at: null,  // Clear last_seen_at on registration (only set on logout)
     });
     const token = signPublicJwt(user.id);
     return res.status(201).json({
@@ -83,6 +88,17 @@ exports.login = async (req, res) => {
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
+    
+    // Update login timestamp and clear logout timestamp
+    // Clear last_seen_at when user logs in (will be set only on logout)
+    const now = new Date();
+    await user.update({
+      logged_in_at: now,
+      logged_out_at: null,
+      is_online: true,
+      last_seen_at: null,  // Clear last_seen_at on login (only set on logout)
+    });
+    
     const token = signPublicJwt(user.id);
     return res.json({
       success: true,
@@ -135,7 +151,19 @@ exports.verifyOtp = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Invalid or expired OTP" });
     }
-    await user.update({ otp: null, otp_expiry: null });
+    
+    // Update login timestamp and set online status (OTP login)
+    // Clear last_seen_at when user logs in (will be set only on logout)
+    const now = new Date();
+    await user.update({
+      otp: null,
+      otp_expiry: null,
+      logged_in_at: now,
+      logged_out_at: null,
+      is_online: true,
+      last_seen_at: null,  // Clear last_seen_at on OTP login (only set on logout)
+    });
+    
     const token = signPublicJwt(user.id);
     return res.json({
       success: true,
@@ -163,6 +191,28 @@ exports.getMe = async (req, res) => {
   }
 };
 
+exports.logout = async (req, res) => {
+  try {
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (user) {
+      const now = new Date();
+      // Update last_seen_at immediately when user clicks logout
+      // Set logged_out_at and is_online to false
+      await user.update({
+        last_seen_at: now,      // Set immediately on logout
+        logged_out_at: now,
+        is_online: false,
+      });
+    }
+    return res.json({ success: true, message: "Logged out successfully" });
+  } catch (err) {
+    console.error("logout error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Logout failed" });
+  }
+};
+
 exports.updateMe = async (req, res) => {
   try {
     const allowed = [
@@ -185,6 +235,8 @@ exports.updateMe = async (req, res) => {
       // File path relative to uploads folder (e.g., "profiles/filename.jpg")
       const photoPath = `profiles/${req.file.filename}`;
       updates.photo = photoPath;
+      // Set photo moderation status to pending
+      updates.photo_moderation_status = "pending";
     }
 
     // Check for email/phone uniqueness if they're being updated
@@ -233,6 +285,10 @@ exports.updateMe = async (req, res) => {
           if (!isNaN(coordValue)) {
             updates[key] = coordValue;
           }
+        } else if (key === "bio") {
+          // If bio is being updated, set moderation status to pending
+          updates[key] = req.body[key];
+          updates.bio_moderation_status = "pending";
         } else {
           updates[key] = req.body[key];
         }
@@ -302,27 +358,89 @@ exports.list = async (req, res) => {
       pageSize = 20,
     } = req.query;
     const where = {};
-    if (city) where.city = city;
-    if (category) where.category = category;
-    if (isVerified !== undefined) where.isVerified = isVerified === "true";
-    if (online !== undefined) where.is_online = online === "true";
-    if (q) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${q}%` } },
-        { city: { [Op.iLike]: `%${q}%` } },
-      ];
-    }
-
+    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    
     // Guest gating: guests cannot view premium categories or verified users list
     if (!req.publicUserId) {
-      where.category = where.category || { [Op.eq]: "Regular" };
+      where.category = category || { [Op.eq]: "Regular" };
       where.isVerified = false;
+      if (city) where.city = city;
+      if (online !== undefined) where.is_online = online === "true";
+      if (q) {
+        where[Op.or] = [
+          { name: { [Op.iLike]: `%${q}%` } },
+          { city: { [Op.iLike]: `%${q}%` } },
+        ];
+      }
+    } else {
+      // Registered users: can see Regular users and verified premium users only
+      // Cannot see unverified premium category users (maintains exclusivity)
+      
+      // Build base filters
+      const baseFilters = {};
+      if (city) baseFilters.city = city;
+      if (online !== undefined) baseFilters.is_online = online === "true";
+      
+      // Handle category filter
+      if (category) {
+        if (premiumCategories.includes(category)) {
+          // Filtering by premium category: only show verified users
+          where.category = category;
+          where.isVerified = true;
+          Object.assign(where, baseFilters);
+        } else {
+          // Filtering by Regular: show all Regular users
+          where.category = category;
+          Object.assign(where, baseFilters);
+        }
+      } else {
+        // No category filter: show Regular OR verified premium users
+        where[Op.and] = [
+          {
+            [Op.or]: [
+              { category: { [Op.eq]: "Regular" } },
+              {
+                category: { [Op.in]: premiumCategories },
+                isVerified: true,
+              },
+            ],
+          },
+          ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
+        ];
+      }
+      
+      // Handle search query
+      if (q) {
+        if (!where[Op.and]) where[Op.and] = [];
+        where[Op.and].push({
+          [Op.or]: [
+            { name: { [Op.iLike]: `%${q}%` } },
+            { city: { [Op.iLike]: `%${q}%` } },
+          ],
+        });
+      }
+      
+      // Handle explicit isVerified filter for registered users
+      if (isVerified !== undefined) {
+        if (category && premiumCategories.includes(category)) {
+          // Premium category filter already enforces isVerified=true
+          // But if user explicitly wants unverified, they shouldn't see premium users anyway
+          // So ignore the filter if it conflicts
+        } else {
+          where.isVerified = isVerified === "true";
+        }
+      }
+      
+      // Exclude current user from browse results
+      if (req.publicUserId) {
+        where.id = { [Op.ne]: req.publicUserId };
+      }
     }
 
     const limit = Math.min(Number(pageSize) || 20, 50);
     const offset = (Number(page) - 1) * limit;
 
-    const rows = await PublicUser.findAll({
+    const { count, rows } = await PublicUser.findAndCountAll({
       where,
       attributes: {
         exclude: ["password", "otp", "phone"], // mask phone in listings
@@ -335,7 +453,31 @@ exports.list = async (req, res) => {
       limit,
       offset,
     });
-    return res.json({ success: true, data: rows });
+
+    // Filter out unapproved photos and bios for public listings
+    const filteredRows = rows.map((user) => {
+      const userData = user.toJSON();
+      // Hide photo if not approved
+      if (userData.photo_moderation_status !== "approved") {
+        userData.photo = null;
+      }
+      // Hide bio if not approved
+      if (userData.bio_moderation_status !== "approved") {
+        userData.bio = null;
+      }
+      return userData;
+    });
+
+    return res.json({
+      success: true,
+      data: filteredRows,
+      pagination: {
+        total: count,
+        page: Number(page),
+        pageSize: limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    });
   } catch (err) {
     console.error("users list error:", err);
     return res
@@ -358,6 +500,22 @@ exports.featured = async (req, res) => {
     // Guest gating: exclude premium categories for guests
     if (!req.publicUserId) {
       where.category = { [Op.eq]: "Regular" };
+    } else {
+      // Registered users: only show Regular users or verified premium users in featured
+      const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+      where[Op.and] = [
+        {
+          [Op.or]: [
+            { category: { [Op.eq]: "Regular" } },
+            {
+              category: { [Op.in]: premiumCategories },
+              isVerified: true,
+            },
+          ],
+        },
+      ];
+      // Exclude current user from featured results
+      where.id = { [Op.ne]: req.publicUserId };
     }
     const rows = await PublicUser.findAll({
       where,
@@ -368,7 +526,22 @@ exports.featured = async (req, res) => {
       ],
       limit: 20,
     });
-    return res.json({ success: true, data: rows });
+
+    // Filter out unapproved photos and bios for featured listings
+    const filteredRows = rows.map((user) => {
+      const userData = user.toJSON();
+      // Hide photo if not approved
+      if (userData.photo_moderation_status !== "approved") {
+        userData.photo = null;
+      }
+      // Hide bio if not approved
+      if (userData.bio_moderation_status !== "approved") {
+        userData.bio = null;
+      }
+      return userData;
+    });
+
+    return res.json({ success: true, data: filteredRows });
   } catch (err) {
     console.error("users featured error:", err);
     return res
@@ -463,6 +636,172 @@ exports.adminGetById = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch public user",
+    });
+  }
+};
+
+// Get public user profile by ID (for viewing other users)
+exports.getById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await PublicUser.findByPk(id, {
+      attributes: {
+        exclude: [
+          "password",
+          "otp",
+          "phone",
+          "email",
+          "token_balance",
+          "latitude",
+          "longitude",
+        ],
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Only show photo if approved
+    const safeUser = { ...user.toJSON() };
+    if (
+      safeUser.photo_moderation_status !== "approved" &&
+      safeUser.photo_moderation_status !== null
+    ) {
+      safeUser.photo = null;
+    }
+
+    // Only show bio if approved
+    if (
+      safeUser.bio_moderation_status !== "approved" &&
+      safeUser.bio_moderation_status !== null
+    ) {
+      safeUser.bio = null;
+    }
+
+    return res.json({
+      success: true,
+      data: safeUser,
+    });
+  } catch (err) {
+    console.error("get user by id error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user profile",
+    });
+  }
+};
+
+// Track profile view with 24-hour cooldown
+exports.trackProfileView = async (req, res) => {
+  try {
+    const viewerId = req.publicUserId; // Current logged-in user
+    const { id: viewedId } = req.params; // User whose profile is being viewed
+
+    // Can't view own profile (doesn't count as view)
+    if (viewerId === viewedId) {
+      return res.json({
+        success: true,
+        data: { counted: false, message: "Cannot count view of own profile" },
+      });
+    }
+
+    // Check if viewed user exists
+    const viewedUser = await PublicUser.findByPk(viewedId);
+    if (!viewedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Get current date (start of day for cooldown calculation)
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    );
+
+    // Check if viewer has already viewed this profile today
+    const lastView = await ProfileView.findOne({
+      where: {
+        viewer_id: viewerId,
+        viewed_id: viewedId,
+        viewed_at: {
+          [Op.gte]: todayStart, // Views from today onwards
+        },
+      },
+      order: [["viewed_at", "DESC"]],
+    });
+
+    if (lastView) {
+      // Already viewed today, don't count again
+      return res.json({
+        success: true,
+        data: {
+          counted: false,
+          message: "Profile view already counted today",
+          profile_views: viewedUser.profile_views,
+        },
+      });
+    }
+
+    // Check if there's any view in the last 24 hours (more precise cooldown)
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const recentView = await ProfileView.findOne({
+      where: {
+        viewer_id: viewerId,
+        viewed_id: viewedId,
+        viewed_at: {
+          [Op.gte]: twentyFourHoursAgo,
+        },
+      },
+      order: [["viewed_at", "DESC"]],
+    });
+
+    if (recentView) {
+      // Viewed within last 24 hours, don't count
+      return res.json({
+        success: true,
+        data: {
+          counted: false,
+          message: "Profile view already counted in last 24 hours",
+          profile_views: viewedUser.profile_views,
+        },
+      });
+    }
+
+    // Create new profile view record
+    await ProfileView.create({
+      viewer_id: viewerId,
+      viewed_id: viewedId,
+      viewed_at: now,
+    });
+
+    // Increment profile views count
+    await viewedUser.increment("profile_views");
+
+    // Fetch updated user to get new count
+    await viewedUser.reload();
+
+    return res.json({
+      success: true,
+      data: {
+        counted: true,
+        message: "Profile view counted",
+        profile_views: viewedUser.profile_views,
+      },
+    });
+  } catch (err) {
+    console.error("track profile view error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to track profile view",
     });
   }
 };

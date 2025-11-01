@@ -30,6 +30,15 @@ exports.requestVerification = async (req, res) => {
 exports.listRequests = async (_req, res) => {
   try {
     const rows = await PremiumVerification.findAll({
+      include: [
+        {
+          model: PublicUser,
+          as: "publicUser",
+          attributes: {
+            exclude: ["password", "otp"],
+          },
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
     return res.json({ success: true, data: rows });
@@ -50,16 +59,47 @@ exports.approve = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Request not found" });
+    
+    // Check if already approved
+    if (rec.verification_status === "approved") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Request is already approved" });
+    }
+    
+    // Update verification record
     await rec.update({
       verification_status: "approved",
       admin_id: req.userId,
       notes,
     });
-    await PublicUser.update(
+    
+    // Update user's verified status
+    const [updatedCount] = await PublicUser.update(
       { isVerified: true },
       { where: { id: rec.public_user_id } }
     );
-    return res.json({ success: true, data: rec });
+    
+    console.log(`Verification approved: User ${rec.public_user_id} is now verified. Admin: ${req.userId}`);
+    
+    // Fetch updated record with user data
+    const updatedRec = await PremiumVerification.findByPk(id, {
+      include: [
+        {
+          model: PublicUser,
+          as: "publicUser",
+          attributes: {
+            exclude: ["password", "otp"],
+          },
+        },
+      ],
+    });
+    
+    return res.json({ 
+      success: true, 
+      message: "Verification approved successfully",
+      data: updatedRec 
+    });
   } catch (err) {
     console.error("approve error:", err);
     return res
@@ -77,17 +117,81 @@ exports.reject = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Request not found" });
+    
+    // Check if already processed
+    if (rec.verification_status !== "pending") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Request has already been processed" });
+    }
+    
+    // Update verification record
     await rec.update({
       verification_status: "rejected",
       admin_id: req.userId,
       notes,
     });
-    return res.json({ success: true, data: rec });
+    
+    console.log(`Verification rejected: Request ${id}. Admin: ${req.userId}`);
+    
+    // Fetch updated record with user data
+    const updatedRec = await PremiumVerification.findByPk(id, {
+      include: [
+        {
+          model: PublicUser,
+          as: "publicUser",
+          attributes: {
+            exclude: ["password", "otp"],
+          },
+        },
+      ],
+    });
+    
+    return res.json({ 
+      success: true, 
+      message: "Verification rejected",
+      data: updatedRec 
+    });
   } catch (err) {
     console.error("reject error:", err);
     return res
       .status(500)
       .json({ success: false, message: "Failed to reject" });
+  }
+};
+
+// Get current user's verification status
+exports.getMyStatus = async (req, res) => {
+  try {
+    const verification = await PremiumVerification.findOne({
+      where: { public_user_id: req.publicUserId },
+      order: [["createdAt", "DESC"]],
+    });
+    
+    if (!verification) {
+      return res.json({ 
+        success: true, 
+        data: { 
+          status: null, 
+          message: "No verification request found" 
+        } 
+      });
+    }
+    
+    return res.json({ 
+      success: true, 
+      data: {
+        id: verification.id,
+        status: verification.verification_status,
+        createdAt: verification.createdAt,
+        notes: verification.notes,
+      } 
+    });
+  } catch (err) {
+    console.error("getMyStatus error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch verification status" });
   }
 };
 
@@ -108,7 +212,11 @@ exports.loungeByCategory = async (req, res) => {
         .json({ success: false, message: "Login required" });
     }
     const rows = await PublicUser.findAll({
-      where: { category, isVerified: true },
+      where: { 
+        category, 
+        isVerified: true,
+        id: { [Op.ne]: req.publicUserId } // Exclude current user
+      },
       attributes: { exclude: ["password", "otp", "phone"] },
       order: [
         ["boost_score", "DESC"],

@@ -52,7 +52,25 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: true,
       },
+      photo_moderation_status: {
+        type: DataTypes.ENUM("pending", "approved", "rejected"),
+        allowNull: true,
+        defaultValue: null,
+      },
+      bio_moderation_status: {
+        type: DataTypes.ENUM("pending", "approved", "rejected"),
+        allowNull: true,
+        defaultValue: null,
+      },
       last_seen_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      logged_in_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      logged_out_at: {
         type: DataTypes.DATE,
         allowNull: true,
       },
@@ -91,6 +109,12 @@ module.exports = (sequelize) => {
       longitude: {
         type: DataTypes.DECIMAL(11, 8),
         allowNull: true,
+      },
+      profile_views: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+        allowNull: false,
+        comment: "Total number of profile views (with cooldown)",
       },
     },
     {

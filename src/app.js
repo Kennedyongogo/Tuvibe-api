@@ -20,6 +20,7 @@ const lookingForPostRoutes = require("./routes/lookingForPostRoutes");
 const favouriteRoutes = require("./routes/favouriteRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const moderationRoutes = require("./routes/moderationRoutes");
 
 const app = express();
 
@@ -92,6 +93,7 @@ app.use("/api/posts", lookingForPostRoutes);
 app.use("/api/favourites", favouriteRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/moderation", moderationRoutes);
 console.log("✅ TuVibe routes registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
@@ -224,6 +226,13 @@ const createUploadDirectories = () => {
   });
 };
 
+// Background job disabled - online status is now managed only through login/logout endpoints
+// Users remain online until they explicitly log out
+const startOfflineTracking = () => {
+  // Background job disabled - online status managed by login/logout endpoints only
+  console.log("Online status tracking: Manual (login/logout endpoints only)");
+};
+
 // Initialize models and associations
 const initializeApp = async () => {
   try {
@@ -240,6 +249,9 @@ const initializeApp = async () => {
     // Setup model associations
     setupAssociations();
     console.log("✅ Model associations configured");
+
+    // Start background job to track user online status
+    startOfflineTracking();
 
     // Chatbot removed
 

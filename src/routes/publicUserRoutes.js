@@ -18,6 +18,7 @@ router.post("/verify-otp", ctrl.verifyOtp);
 
 // Profile
 router.get("/me", authenticatePublic, ctrl.getMe);
+router.post("/logout", authenticatePublic, ctrl.logout);
 router.put(
   "/me",
   authenticatePublic,
@@ -30,7 +31,11 @@ router.put(
 router.get("/wallet", authenticatePublic, ctrl.getWallet);
 
 // Browse & Featured (guest-friendly)
-router.get("/", optionalPublicAuth, ctrl.list);
 router.get("/featured", optionalPublicAuth, ctrl.featured);
+router.get("/", optionalPublicAuth, ctrl.list);
+
+// Profile viewing (requires authentication - use /users prefix to avoid conflicts)
+router.get("/users/:id", authenticatePublic, ctrl.getById);
+router.post("/users/:id/view", authenticatePublic, ctrl.trackProfileView);
 
 module.exports = router;

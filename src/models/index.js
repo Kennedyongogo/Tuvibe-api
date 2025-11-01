@@ -11,6 +11,7 @@ const LookingForPost = require("./lookingForPost")(sequelize);
 const Favourite = require("./favourite")(sequelize);
 const Payment = require("./payment")(sequelize);
 const Notification = require("./notification")(sequelize);
+const ProfileView = require("./profileView")(sequelize);
 
 const models = {
   AdminUser,
@@ -23,6 +24,7 @@ const models = {
   Favourite,
   Payment,
   Notification,
+  ProfileView,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -43,6 +45,7 @@ const initializeModels = async () => {
     await Favourite.sync({ force: false, alter: false });
     await Payment.sync({ force: false, alter: false });
     await Notification.sync({ force: false, alter: false });
+    await ProfileView.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -156,6 +159,26 @@ const setupAssociations = () => {
     models.Notification.belongsTo(models.PublicUser, {
       foreignKey: "public_user_id",
       as: "recipient",
+    });
+
+    // PublicUser ↔ ProfileView (viewer)
+    models.PublicUser.hasMany(models.ProfileView, {
+      foreignKey: "viewer_id",
+      as: "viewsGiven",
+    });
+    models.ProfileView.belongsTo(models.PublicUser, {
+      foreignKey: "viewer_id",
+      as: "viewer",
+    });
+
+    // PublicUser ↔ ProfileView (viewed)
+    models.PublicUser.hasMany(models.ProfileView, {
+      foreignKey: "viewed_id",
+      as: "viewsReceived",
+    });
+    models.ProfileView.belongsTo(models.PublicUser, {
+      foreignKey: "viewed_id",
+      as: "viewedUser",
     });
 
     console.log("✅ All associations set up successfully");
