@@ -33,6 +33,28 @@ exports.listTransactions = async (req, res) => {
   }
 };
 
+exports.getTransaction = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const row = await TokenTransaction.findByPk(id);
+    if (!row)
+      return res
+        .status(404)
+        .json({ success: false, message: "Transaction not found" });
+    // Verify transaction belongs to current user
+    if (row.public_user_id !== req.publicUserId)
+      return res
+        .status(403)
+        .json({ success: false, message: "Access denied" });
+    return res.json({ success: true, data: row });
+  } catch (err) {
+    console.error("getTransaction error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch transaction" });
+  }
+};
+
 exports.purchaseTokens = async (req, res) => {
   try {
     const { amount, method, reference } = req.body;

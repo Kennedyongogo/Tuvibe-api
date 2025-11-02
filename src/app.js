@@ -21,6 +21,7 @@ const favouriteRoutes = require("./routes/favouriteRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const moderationRoutes = require("./routes/moderationRoutes");
+const statsRoutes = require("./routes/statsRoutes");
 
 const app = express();
 
@@ -34,6 +35,7 @@ const profilesUploadPath = path.join(__dirname, "..", "uploads", "profiles");
 const documentsUploadPath = path.join(__dirname, "..", "uploads", "documents");
 const projectsUploadPath = path.join(__dirname, "..", "uploads", "projects");
 const inquiriesUploadPath = path.join(__dirname, "..", "uploads", "inquiries");
+const marketUploadPath = path.join(__dirname, "..", "uploads", "market");
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
@@ -62,6 +64,12 @@ console.log(
   fs.existsSync(inquiriesUploadPath)
 );
 console.log(
+  "  - Market:",
+  marketUploadPath,
+  "- Exists:",
+  fs.existsSync(marketUploadPath)
+);
+console.log(
   "  - Misc:",
   miscUploadPath,
   "- Exists:",
@@ -73,6 +81,7 @@ app.use("/uploads/profiles", express.static(profilesUploadPath));
 app.use("/uploads/documents", express.static(documentsUploadPath));
 app.use("/uploads/projects", express.static(projectsUploadPath));
 app.use("/uploads/inquiries", express.static(inquiriesUploadPath));
+app.use("/uploads/market", express.static(marketUploadPath));
 app.use("/uploads/misc", express.static(miscUploadPath));
 
 // API routes
@@ -83,6 +92,10 @@ console.log("✅ /api/admin-users route registered");
 
 app.use("/api/public", publicUserRoutes);
 console.log("✅ /api/public route registered");
+
+// Stats route
+app.use("/api/stats", statsRoutes);
+console.log("✅ /api/stats route registered");
 
 // TuVibe routes
 app.use("/api/tokens", tokenRoutes);

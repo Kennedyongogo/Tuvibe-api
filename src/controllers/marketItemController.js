@@ -1,5 +1,6 @@
 const { MarketItem, AdminUser } = require("../models");
 const { Sequelize } = require("sequelize");
+const path = require("path");
 
 exports.list = async (req, res) => {
   try {
@@ -51,7 +52,6 @@ exports.create = async (req, res) => {
       title,
       description,
       price,
-      image,
       whatsapp_number,
       is_featured,
       tag,
@@ -60,11 +60,18 @@ exports.create = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "title and price required" });
+    
+    // Handle image upload
+    let imagePath = null;
+    if (req.file) {
+      imagePath = `market/${req.file.filename}`;
+    }
+    
     const row = await MarketItem.create({
       title,
       description,
       price,
-      image,
+      image: imagePath,
       whatsapp_number,
       is_featured: !!is_featured,
       created_by: req.userId,
@@ -91,7 +98,6 @@ exports.update = async (req, res) => {
       "title",
       "description",
       "price",
-      "image",
       "whatsapp_number",
       "is_featured",
       "tag",
@@ -99,6 +105,24 @@ exports.update = async (req, res) => {
     const updates = {};
     for (const k of allowed)
       if (req.body[k] !== undefined) updates[k] = req.body[k];
+    
+    // Handle image upload - only update if new file is uploaded
+    if (req.file) {
+      // Delete old image if exists
+      if (row.image) {
+        const fs = require("fs");
+        const oldImagePath = path.join(__dirname, "..", "..", "uploads", row.image);
+        if (fs.existsSync(oldImagePath)) {
+          try {
+            fs.unlinkSync(oldImagePath);
+          } catch (err) {
+            console.error("Error deleting old image:", err);
+          }
+        }
+      }
+      updates.image = `market/${req.file.filename}`;
+    }
+    
     await row.update(updates);
     return res.json({ success: true, data: row });
   } catch (err) {

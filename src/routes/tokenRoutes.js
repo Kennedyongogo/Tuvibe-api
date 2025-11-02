@@ -5,6 +5,7 @@ const ctrl = require("../controllers/tokenController");
 
 router.get("/balance", authenticatePublic, ctrl.getBalance);
 router.get("/transactions", authenticatePublic, ctrl.listTransactions);
+router.get("/transactions/:id", authenticatePublic, ctrl.getTransaction);
 router.post("/purchase", authenticatePublic, ctrl.purchaseTokens);
 router.post("/boost", authenticatePublic, ctrl.boostProfile);
 
