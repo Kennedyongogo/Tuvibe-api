@@ -280,6 +280,91 @@ exports.getDashboardStats = async (req, res) => {
       raw: true,
     });
 
+    // ==================== BOOST STATS ====================
+    const now = new Date();
+    const boostStats = {
+      // Total boosts purchased (count of boost transactions)
+      totalBoostsPurchased: await TokenTransaction.count({
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+        },
+      }),
+      // Total tokens spent on boosts
+      totalTokensSpentOnBoosts: await TokenTransaction.sum("amount", {
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+        },
+      }).then((v) => Math.abs(Number(v || 0))),
+      // Active boosts (profiles with is_featured_until > now)
+      activeBoosts: await PublicUser.count({
+        where: {
+          is_featured_until: { [Op.gt]: now },
+        },
+      }),
+      // Users with boost_score > 0 (have boosted at least once)
+      usersWithBoostHistory: await PublicUser.count({
+        where: {
+          boost_score: { [Op.gt]: 0 },
+        },
+      }),
+      // Average boost score across all users
+      averageBoostScore: await PublicUser.findAll({
+        attributes: [
+          [
+            require("sequelize").fn("AVG", require("sequelize").col("boost_score")),
+            "avg",
+          ],
+        ],
+        raw: true,
+      }).then((result) => Number(result[0]?.avg || 0).toFixed(2)),
+      // Boost purchases by time period
+      boostsToday: await TokenTransaction.count({
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: today },
+        },
+      }),
+      boostsThisWeek: await TokenTransaction.count({
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: thisWeek },
+        },
+      }),
+      boostsThisMonth: await TokenTransaction.count({
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: thisMonth },
+        },
+      }),
+      // Tokens spent on boosts by time period
+      boostTokensToday: await TokenTransaction.sum("amount", {
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: today },
+        },
+      }).then((v) => Math.abs(Number(v || 0))),
+      boostTokensThisWeek: await TokenTransaction.sum("amount", {
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: thisWeek },
+        },
+      }).then((v) => Math.abs(Number(v || 0))),
+      boostTokensThisMonth: await TokenTransaction.sum("amount", {
+        where: {
+          transaction_type: "deduction",
+          description: { [Op.like]: "%Profile boost%" },
+          createdAt: { [Op.gte]: thisMonth },
+        },
+      }).then((v) => Math.abs(Number(v || 0))),
+    };
+
     // ==================== NEW USERS BY TIME ====================
     const newUsersStats = {
       today: await PublicUser.count({
@@ -345,6 +430,7 @@ exports.getDashboardStats = async (req, res) => {
         marketStats,
         engagementStats,
         unlocksByCategory,
+        boostStats,
         newUsersStats,
         recentActivity: {
           recentUsers,

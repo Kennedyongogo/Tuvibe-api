@@ -27,8 +27,8 @@ const sequelize = new Sequelize(
     dialect: "postgres",
     logging: false,
     pool: {
-      max: isProduction ? 20 : 5, // More connections for PgBouncer in production
-      min: isProduction ? 2 : 0,
+      max: isProduction ? 20 : 5,
+      min: isProduction ? 2 : 1, // Keep at least 1 connection alive in dev
       acquire: 30000,
       idle: 10000,
     },
@@ -36,9 +36,6 @@ const sequelize = new Sequelize(
       ? {
           // PgBouncer specific settings for production
           application_name: "construction_management_api",
-          // Connection pooling optimizations
-          keepAlive: true,
-          keepAliveInitialDelayMillis: 10000,
         }
       : {},
   }
@@ -60,6 +57,7 @@ const directSequelize = new Sequelize(
       acquire: 30000,
       idle: 10000,
     },
+    dialectOptions: {},
   }
 );
 

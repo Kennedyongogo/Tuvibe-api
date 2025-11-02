@@ -1,8 +1,9 @@
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { Op } = require("sequelize");
+const { Op, Sequelize } = require("sequelize");
 const config = require("../config/config");
 const { PublicUser, TokenTransaction, ProfileView } = require("../models");
+const { sequelize } = require("../config/database");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -447,6 +448,21 @@ exports.list = async (req, res) => {
       },
       order: [
         ["isVerified", "DESC"],
+        // Prioritize active boosts: profiles with is_featured_until > current time appear first
+        [
+          Sequelize.literal(`CASE 
+            WHEN "PublicUser"."is_featured_until" IS NULL THEN 0 
+            WHEN "PublicUser"."is_featured_until" > NOW() THEN 1 
+            ELSE 0 
+          END`),
+          "DESC"
+        ],
+        // Then sort by is_featured_until DESC (future dates first, NULLs last)
+        // Note: Sequelize doesn't support NULLS LAST directly, so we use COALESCE to push NULLs to end
+        [
+          Sequelize.literal(`COALESCE("PublicUser"."is_featured_until", '1970-01-01'::timestamp)`),
+          "DESC"
+        ],
         ["boost_score", "DESC"],
         ["createdAt", "DESC"],
       ],
