@@ -54,7 +54,7 @@ exports.register = async (req, res) => {
       logged_in_at: now,
       logged_out_at: null,
       is_online: true,
-      last_seen_at: null,  // Clear last_seen_at on registration (only set on logout)
+      last_seen_at: null, // Clear last_seen_at on registration (only set on logout)
     });
     const token = signPublicJwt(user.id);
     return res.status(201).json({
@@ -89,7 +89,7 @@ exports.login = async (req, res) => {
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
-    
+
     // Update login timestamp and clear logout timestamp
     // Clear last_seen_at when user logs in (will be set only on logout)
     const now = new Date();
@@ -97,9 +97,9 @@ exports.login = async (req, res) => {
       logged_in_at: now,
       logged_out_at: null,
       is_online: true,
-      last_seen_at: null,  // Clear last_seen_at on login (only set on logout)
+      last_seen_at: null, // Clear last_seen_at on login (only set on logout)
     });
-    
+
     const token = signPublicJwt(user.id);
     return res.json({
       success: true,
@@ -152,7 +152,7 @@ exports.verifyOtp = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Invalid or expired OTP" });
     }
-    
+
     // Update login timestamp and set online status (OTP login)
     // Clear last_seen_at when user logs in (will be set only on logout)
     const now = new Date();
@@ -162,9 +162,9 @@ exports.verifyOtp = async (req, res) => {
       logged_in_at: now,
       logged_out_at: null,
       is_online: true,
-      last_seen_at: null,  // Clear last_seen_at on OTP login (only set on logout)
+      last_seen_at: null, // Clear last_seen_at on OTP login (only set on logout)
     });
-    
+
     const token = signPublicJwt(user.id);
     return res.json({
       success: true,
@@ -200,7 +200,7 @@ exports.logout = async (req, res) => {
       // Update last_seen_at immediately when user clicks logout
       // Set logged_out_at and is_online to false
       await user.update({
-        last_seen_at: now,      // Set immediately on logout
+        last_seen_at: now, // Set immediately on logout
         logged_out_at: now,
         is_online: false,
       });
@@ -208,9 +208,7 @@ exports.logout = async (req, res) => {
     return res.json({ success: true, message: "Logged out successfully" });
   } catch (err) {
     console.error("logout error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Logout failed" });
+    return res.status(500).json({ success: false, message: "Logout failed" });
   }
 };
 
@@ -346,6 +344,21 @@ exports.getWallet = async (req, res) => {
   }
 };
 
+// Haversine formula helper function to calculate distance in kilometers
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
 // Public listing with filters and guest gating
 exports.list = async (req, res) => {
   try {
@@ -357,10 +370,35 @@ exports.list = async (req, res) => {
       q,
       page = 1,
       pageSize = 20,
+      nearby,
+      radius = 10, // Default radius in kilometers
     } = req.query;
     const where = {};
     const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
-    
+
+    // Location-based search variables
+    let userLat = null;
+    let userLon = null;
+    let searchRadius = parseFloat(radius) || 10;
+    const isNearbySearch = nearby === "true" && req.publicUserId;
+
+    // Get current user's location for nearby search
+    if (isNearbySearch) {
+      const currentUser = await PublicUser.findByPk(req.publicUserId, {
+        attributes: ["latitude", "longitude"],
+      });
+      if (currentUser && currentUser.latitude && currentUser.longitude) {
+        userLat = parseFloat(currentUser.latitude);
+        userLon = parseFloat(currentUser.longitude);
+      } else {
+        // User doesn't have location set, return error
+        return res.status(400).json({
+          success: false,
+          message: "Please set your location in profile to search nearby users",
+        });
+      }
+    }
+
     // Guest gating: guests cannot view premium categories or verified users list
     if (!req.publicUserId) {
       where.category = category || { [Op.eq]: "Regular" };
@@ -376,12 +414,12 @@ exports.list = async (req, res) => {
     } else {
       // Registered users: can see Regular users and verified premium users only
       // Cannot see unverified premium category users (maintains exclusivity)
-      
+
       // Build base filters
       const baseFilters = {};
       if (city) baseFilters.city = city;
       if (online !== undefined) baseFilters.is_online = online === "true";
-      
+
       // Handle category filter
       if (category) {
         if (premiumCategories.includes(category)) {
@@ -409,7 +447,7 @@ exports.list = async (req, res) => {
           ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
         ];
       }
-      
+
       // Handle search query
       if (q) {
         if (!where[Op.and]) where[Op.and] = [];
@@ -420,7 +458,7 @@ exports.list = async (req, res) => {
           ],
         });
       }
-      
+
       // Handle explicit isVerified filter for registered users
       if (isVerified !== undefined) {
         if (category && premiumCategories.includes(category)) {
@@ -431,22 +469,34 @@ exports.list = async (req, res) => {
           where.isVerified = isVerified === "true";
         }
       }
-      
+
       // Exclude current user from browse results
       if (req.publicUserId) {
         where.id = { [Op.ne]: req.publicUserId };
       }
     }
 
+    // For nearby search, only include users with coordinates
+    if (isNearbySearch) {
+      where.latitude = { [Op.ne]: null };
+      where.longitude = { [Op.ne]: null };
+    }
+
     const limit = Math.min(Number(pageSize) || 20, 50);
     const offset = (Number(page) - 1) * limit;
 
-    const { count, rows } = await PublicUser.findAndCountAll({
+    // For nearby search, we need to fetch all matching users first to calculate distances
+    // Then filter by radius and paginate
+    let queryOptions = {
       where,
       attributes: {
         exclude: ["password", "otp", "phone"], // mask phone in listings
       },
-      order: [
+    };
+
+    // If not nearby search, apply ordering and pagination normally
+    if (!isNearbySearch) {
+      queryOptions.order = [
         ["isVerified", "DESC"],
         // Prioritize active boosts: profiles with is_featured_until > current time appear first
         [
@@ -455,24 +505,91 @@ exports.list = async (req, res) => {
             WHEN "PublicUser"."is_featured_until" > NOW() THEN 1 
             ELSE 0 
           END`),
-          "DESC"
+          "DESC",
         ],
         // Then sort by is_featured_until DESC (future dates first, NULLs last)
         // Note: Sequelize doesn't support NULLS LAST directly, so we use COALESCE to push NULLs to end
         [
-          Sequelize.literal(`COALESCE("PublicUser"."is_featured_until", '1970-01-01'::timestamp)`),
-          "DESC"
+          Sequelize.literal(
+            `COALESCE("PublicUser"."is_featured_until", '1970-01-01'::timestamp)`
+          ),
+          "DESC",
         ],
         ["boost_score", "DESC"],
         ["createdAt", "DESC"],
-      ],
-      limit,
-      offset,
-    });
+      ];
+      queryOptions.limit = limit;
+      queryOptions.offset = offset;
+    }
+
+    const { count, rows } = await PublicUser.findAndCountAll(queryOptions);
+
+    // For nearby search, filter by distance and sort
+    let processedRows = rows;
+    if (isNearbySearch) {
+      // Calculate distance for each user and filter by radius
+      const usersWithDistance = rows
+        .map((user) => {
+          const userData = user.toJSON();
+          const lat = parseFloat(userData.latitude);
+          const lon = parseFloat(userData.longitude);
+
+          if (!isNaN(lat) && !isNaN(lon)) {
+            const distance = calculateDistance(userLat, userLon, lat, lon);
+            return { ...userData, distance };
+          }
+          return null;
+        })
+        .filter((user) => user !== null && user.distance <= searchRadius)
+        .sort((a, b) => a.distance - b.distance); // Sort by distance ascending
+
+      // Apply pagination after filtering
+      const startIndex = offset;
+      const endIndex = startIndex + limit;
+      processedRows = usersWithDistance
+        .slice(startIndex, endIndex)
+        .map((user) => {
+          // Convert back to Sequelize instance format for consistency
+          const userModel = rows.find((r) => r.id === user.id);
+          if (userModel) {
+            const userJson = userModel.toJSON();
+            userJson.distance = user.distance;
+            return userJson;
+          }
+          return user;
+        });
+
+      // Update count to reflect filtered results
+      const totalFiltered = usersWithDistance.length;
+
+      // Filter out unapproved photos and bios
+      const filteredRows = processedRows.map((user) => {
+        // Hide photo if not approved
+        if (user.photo_moderation_status !== "approved") {
+          user.photo = null;
+        }
+        // Hide bio if not approved
+        if (user.bio_moderation_status !== "approved") {
+          user.bio = null;
+        }
+        return user;
+      });
+
+      return res.json({
+        success: true,
+        data: filteredRows,
+        pagination: {
+          total: totalFiltered,
+          page: Number(page),
+          pageSize: limit,
+          totalPages: Math.ceil(totalFiltered / limit),
+        },
+      });
+    }
 
     // Filter out unapproved photos and bios for public listings
-    const filteredRows = rows.map((user) => {
-      const userData = user.toJSON();
+    const filteredRows = processedRows.map((user) => {
+      const userData = user.toJSON ? user.toJSON() : user;
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
