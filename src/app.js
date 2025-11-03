@@ -22,6 +22,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const moderationRoutes = require("./routes/moderationRoutes");
 const statsRoutes = require("./routes/statsRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 
 const app = express();
 
@@ -107,6 +108,7 @@ app.use("/api/favourites", favouriteRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/moderation", moderationRoutes);
+app.use("/api/reports", reportRoutes);
 console.log("✅ TuVibe routes registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies

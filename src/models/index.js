@@ -12,6 +12,7 @@ const Favourite = require("./favourite")(sequelize);
 const Payment = require("./payment")(sequelize);
 const Notification = require("./notification")(sequelize);
 const ProfileView = require("./profileView")(sequelize);
+const Report = require("./report")(sequelize);
 
 const models = {
   AdminUser,
@@ -25,6 +26,7 @@ const models = {
   Payment,
   Notification,
   ProfileView,
+  Report,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -46,6 +48,7 @@ const initializeModels = async () => {
     await Payment.sync({ force: false, alter: false });
     await Notification.sync({ force: false, alter: false });
     await ProfileView.sync({ force: false, alter: false });
+    await Report.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -179,6 +182,36 @@ const setupAssociations = () => {
     models.ProfileView.belongsTo(models.PublicUser, {
       foreignKey: "viewed_id",
       as: "viewedUser",
+    });
+
+    // PublicUser ↔ Report (reporter)
+    models.PublicUser.hasMany(models.Report, {
+      foreignKey: "public_user_id",
+      as: "reports",
+    });
+    models.Report.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "reporter",
+    });
+
+    // PublicUser ↔ Report (reported user)
+    models.PublicUser.hasMany(models.Report, {
+      foreignKey: "reported_user_id",
+      as: "reportsAgainst",
+    });
+    models.Report.belongsTo(models.PublicUser, {
+      foreignKey: "reported_user_id",
+      as: "reportedUser",
+    });
+
+    // AdminUser ↔ Report
+    models.AdminUser.hasMany(models.Report, {
+      foreignKey: "admin_id",
+      as: "handledReports",
+    });
+    models.Report.belongsTo(models.AdminUser, {
+      foreignKey: "admin_id",
+      as: "handledBy",
     });
 
     console.log("✅ All associations set up successfully");
