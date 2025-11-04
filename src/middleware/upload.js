@@ -14,9 +14,15 @@ const storage = multer.diskStorage({
       file.fieldname === "update_images"
     ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "projects");
-    } else if (file.fieldname === "profile_image") {
+    } else if (
+      file.fieldname === "profile_image" ||
+      file.fieldname === "profile_images"
+    ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "profiles");
-    } else if (file.fieldname === "image" || file.fieldname === "market_image") {
+    } else if (
+      file.fieldname === "image" ||
+      file.fieldname === "market_image"
+    ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "market");
     } else if (
       file.fieldname === "document" ||
@@ -109,6 +115,24 @@ const uploadProfileImage = (req, res, next) => {
     req.headers["content-type"].includes("multipart/form-data")
   ) {
     upload.single("profile_image")(req, res, next);
+  } else {
+    // For JSON requests, skip file upload processing
+    next();
+  }
+};
+
+// Middleware for multiple profile images upload (optional - allows requests without files)
+const uploadProfileImages = (req, res, next) => {
+  // Only process multipart/form-data requests
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    // Support both single profile_image and multiple profile_images
+    upload.fields([
+      { name: "profile_image", maxCount: 1 },
+      { name: "profile_images", maxCount: 10 },
+    ])(req, res, next);
   } else {
     // For JSON requests, skip file upload processing
     next();
@@ -222,6 +246,7 @@ const getFileType = (mimetype) => {
 
 module.exports = {
   uploadProfileImage,
+  uploadProfileImages,
   uploadDocument,
   uploadFile,
   uploadDocuments,

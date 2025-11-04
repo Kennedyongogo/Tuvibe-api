@@ -5,18 +5,12 @@ const {
   authenticatePublic,
   optionalPublicAuth,
 } = require("../middleware/publicAuth");
-const { authenticateAdmin } = require("../middleware/auth");
 
-// Public user
-router.post("/request", authenticatePublic, ctrl.requestVerification);
-router.get("/my-status", authenticatePublic, ctrl.getMyStatus);
-
-// Admin
-router.get("/", authenticateAdmin, ctrl.listRequests);
-router.post("/:id/approve", authenticateAdmin, ctrl.approve);
-router.post("/:id/reject", authenticateAdmin, ctrl.reject);
-
-module.exports = router;
+// Public user - upgrade to premium (automatic verification)
+router.get("/upgrade-costs", authenticatePublic, ctrl.getUpgradeCosts);
+router.post("/upgrade", authenticatePublic, ctrl.upgradeToPremium);
 
 // Premium Lounge (auth required)
 router.get("/lounge/:category", optionalPublicAuth, ctrl.loungeByCategory);
+
+module.exports = router;

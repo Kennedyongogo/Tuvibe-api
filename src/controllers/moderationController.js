@@ -7,7 +7,7 @@ exports.getPending = async (req, res) => {
     const { type, page = 1, pageSize = 20 } = req.query;
 
     const where = {};
-    
+
     // Filter by type (photo or bio)
     if (type === "photo") {
       where.photo_moderation_status = "pending";
@@ -19,7 +19,10 @@ exports.getPending = async (req, res) => {
       // Both pending photos and bios
       where[Op.or] = [
         { photo_moderation_status: "pending", photo: { [Op.ne]: null } },
-        { bio_moderation_status: "pending", bio: { [Op.ne]: null, [Op.ne]: "" } },
+        {
+          bio_moderation_status: "pending",
+          bio: { [Op.ne]: null, [Op.ne]: "" },
+        },
       ];
     }
 
@@ -97,7 +100,8 @@ exports.approvePhoto = async (req, res) => {
       await Notification.create({
         public_user_id: userId,
         title: "Profile Photo Approved",
-        message: "Your profile photo has been approved and is now visible to others.",
+        message:
+          "Your profile photo has been approved and is now visible to others.",
         isRead: false,
       });
     } catch (notifErr) {
@@ -294,7 +298,8 @@ exports.bulkApprovePhotos = async (req, res) => {
       const notifications = userIds.map((userId) => ({
         public_user_id: userId,
         title: "Profile Photo Approved",
-        message: "Your profile photo has been approved and is now visible to others.",
+        message:
+          "Your profile photo has been approved and is now visible to others.",
         isRead: false,
       }));
       await Notification.bulkCreate(notifications);
@@ -363,3 +368,131 @@ exports.bulkApproveBios = async (req, res) => {
   }
 };
 
+// Approve gallery photo (from photos array)
+exports.approveGalleryPhoto = async (req, res) => {
+  try {
+    const { userId, photoIndex } = req.params;
+    const { notes } = req.body;
+
+    const user = await PublicUser.findByPk(userId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (!user.photos || !Array.isArray(user.photos)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "User has no gallery photos" });
+    }
+
+    const index = parseInt(photoIndex);
+    if (isNaN(index) || index < 0 || index >= user.photos.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid photo index" });
+    }
+
+    // Update the specific photo's moderation status
+    const updatedPhotos = [...user.photos];
+    updatedPhotos[index] = {
+      ...updatedPhotos[index],
+      moderation_status: "approved",
+    };
+
+    await user.update({ photos: updatedPhotos });
+
+    // Create notification for user
+    try {
+      await Notification.create({
+        public_user_id: userId,
+        title: "Gallery Photo Approved",
+        message:
+          "Your gallery photo has been approved and is now visible to others.",
+        isRead: false,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create notification:", notifErr);
+    }
+
+    return res.json({
+      success: true,
+      message: "Gallery photo approved successfully",
+      data: {
+        id: user.id,
+        photos: updatedPhotos,
+      },
+    });
+  } catch (err) {
+    console.error("approveGalleryPhoto error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to approve gallery photo" });
+  }
+};
+
+// Reject gallery photo (from photos array)
+exports.rejectGalleryPhoto = async (req, res) => {
+  try {
+    const { userId, photoIndex } = req.params;
+    const { notes } = req.body;
+
+    const user = await PublicUser.findByPk(userId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (!user.photos || !Array.isArray(user.photos)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "User has no gallery photos" });
+    }
+
+    const index = parseInt(photoIndex);
+    if (isNaN(index) || index < 0 || index >= user.photos.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid photo index" });
+    }
+
+    // Update the specific photo's moderation status
+    const updatedPhotos = [...user.photos];
+    updatedPhotos[index] = {
+      ...updatedPhotos[index],
+      moderation_status: "rejected",
+    };
+
+    await user.update({ photos: updatedPhotos });
+
+    // Create notification for user
+    try {
+      await Notification.create({
+        public_user_id: userId,
+        title: "Gallery Photo Rejected",
+        message:
+          notes ||
+          "Your gallery photo has been rejected. Please upload an appropriate photo.",
+        isRead: false,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create notification:", notifErr);
+    }
+
+    return res.json({
+      success: true,
+      message: "Gallery photo rejected successfully",
+      data: {
+        id: user.id,
+        photos: updatedPhotos,
+      },
+    });
+  } catch (err) {
+    console.error("rejectGalleryPhoto error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to reject gallery photo" });
+  }
+};

@@ -21,7 +21,7 @@ module.exports = (sequelize) => {
         type: DataTypes.INTEGER,
         allowNull: true,
       },
-      city: {
+      county: {
         type: DataTypes.STRING,
         allowNull: true,
       },
@@ -56,6 +56,12 @@ module.exports = (sequelize) => {
         type: DataTypes.ENUM("pending", "approved", "rejected"),
         allowNull: true,
         defaultValue: null,
+      },
+      photos: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        defaultValue: [],
+        comment: "Array of additional photos with moderation status",
       },
       bio_moderation_status: {
         type: DataTypes.ENUM("pending", "approved", "rejected"),

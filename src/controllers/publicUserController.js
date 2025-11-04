@@ -11,19 +11,26 @@ const signPublicJwt = (userId) => {
   });
 };
 
+// Helper function to filter unapproved photos from photos array
+const filterApprovedPhotos = (photos) => {
+  if (!photos || !Array.isArray(photos)) {
+    return [];
+  }
+  return photos.filter((photo) => photo.moderation_status === "approved");
+};
+
 exports.register = async (req, res) => {
   try {
     const {
       name,
       gender,
       age,
-      city,
-      category,
       phone,
       email,
       password,
       latitude,
       longitude,
+      bio,
     } = req.body;
     if (!name || !phone || !email || !password) {
       return res
@@ -40,12 +47,13 @@ exports.register = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
     const now = new Date();
-    const user = await PublicUser.create({
+
+    // Prepare user data
+    const userData = {
       name,
       gender,
       age,
-      city,
-      category,
+      category: "Regular", // Always set as Regular by default
       phone,
       email,
       password: hashed,
@@ -55,7 +63,25 @@ exports.register = async (req, res) => {
       logged_out_at: null,
       is_online: true,
       last_seen_at: null, // Clear last_seen_at on registration (only set on logout)
-    });
+    };
+
+    // Handle bio if provided
+    if (bio) {
+      userData.bio = bio;
+      // Set bio moderation status to pending
+      userData.bio_moderation_status = "pending";
+    }
+
+    // Handle file upload if profile_image is provided
+    if (req.file) {
+      // File path relative to uploads folder (e.g., "profiles/filename.jpg")
+      const photoPath = `profiles/${req.file.filename}`;
+      userData.photo = photoPath;
+      // Set photo moderation status to pending
+      userData.photo_moderation_status = "pending";
+    }
+
+    const user = await PublicUser.create(userData);
     const token = signPublicJwt(user.id);
     return res.status(201).json({
       success: true,
@@ -213,13 +239,13 @@ exports.logout = async (req, res) => {
 };
 
 exports.updateMe = async (req, res) => {
+  let updates = {};
   try {
     const allowed = [
       "name",
       "gender",
       "age",
-      "city",
-      "category",
+      "county",
       "bio",
       "photo",
       "email",
@@ -227,15 +253,73 @@ exports.updateMe = async (req, res) => {
       "latitude",
       "longitude",
     ];
-    const updates = {};
 
-    // Handle file upload if profile_image is provided
-    if (req.file) {
+    // Handle single file upload if profile_image is provided (for main photo update)
+    if (
+      req.files &&
+      req.files.profile_image &&
+      Array.isArray(req.files.profile_image) &&
+      req.files.profile_image.length > 0
+    ) {
       // File path relative to uploads folder (e.g., "profiles/filename.jpg")
-      const photoPath = `profiles/${req.file.filename}`;
+      const photoPath = `profiles/${req.files.profile_image[0].filename}`;
       updates.photo = photoPath;
       // Set photo moderation status to pending
       updates.photo_moderation_status = "pending";
+    }
+
+    // Handle multiple photo uploads if profile_images are provided
+    if (
+      req.files &&
+      req.files.profile_images &&
+      Array.isArray(req.files.profile_images) &&
+      req.files.profile_images.length > 0
+    ) {
+      try {
+        const user = await PublicUser.findByPk(req.publicUserId);
+        if (!user) {
+          return res
+            .status(404)
+            .json({ success: false, message: "User not found" });
+        }
+
+        // Ensure existingPhotos is always an array
+        let existingPhotos = [];
+        if (user.photos) {
+          // Handle JSONB data - it might come as array or need parsing
+          if (Array.isArray(user.photos)) {
+            existingPhotos = user.photos;
+          } else if (typeof user.photos === "string") {
+            // If it's a string, try to parse it
+            try {
+              existingPhotos = JSON.parse(user.photos);
+              if (!Array.isArray(existingPhotos)) {
+                existingPhotos = [];
+              }
+            } catch (e) {
+              existingPhotos = [];
+            }
+          } else {
+            existingPhotos = [];
+          }
+        }
+
+        // Create new photo objects with pending moderation status
+        const newPhotos = req.files.profile_images.map((file) => ({
+          path: `profiles/${file.filename}`,
+          moderation_status: "pending",
+          uploaded_at: new Date().toISOString(),
+        }));
+
+        // Add new photos to existing photos array
+        updates.photos = [...existingPhotos, ...newPhotos];
+      } catch (photoUploadError) {
+        console.error("Error handling photo uploads:", photoUploadError);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to process photo uploads",
+        });
+      }
     }
 
     // Check for email/phone uniqueness if they're being updated
@@ -303,24 +387,114 @@ exports.updateMe = async (req, res) => {
       return res.json({ success: true, data: user });
     }
 
-    await PublicUser.update(updates, { where: { id: req.publicUserId } });
-    const user = await PublicUser.findByPk(req.publicUserId, {
-      attributes: { exclude: ["password", "otp"] },
-    });
-    return res.json({ success: true, data: user });
+    // Ensure photos is properly formatted as JSONB array before saving
+    if (updates.photos && Array.isArray(updates.photos)) {
+      try {
+        // Clean and validate photos array - ensure all are plain objects
+        const cleanedPhotos = updates.photos
+          .filter((photo) => {
+            // Keep only valid photo objects with a path
+            return (
+              photo &&
+              typeof photo === "object" &&
+              photo.path &&
+              typeof photo.path === "string" &&
+              photo.path.trim() !== ""
+            );
+          })
+          .map((photo) => {
+            // Create a clean plain object for JSONB storage
+            const cleanedPhoto = {
+              path: String(photo.path).trim(),
+              moderation_status: photo.moderation_status || "pending",
+            };
+
+            // Handle uploaded_at - ensure it's always an ISO string
+            if (photo.uploaded_at) {
+              try {
+                const date = new Date(photo.uploaded_at);
+                if (!isNaN(date.getTime())) {
+                  cleanedPhoto.uploaded_at = date.toISOString();
+                } else {
+                  cleanedPhoto.uploaded_at = new Date().toISOString();
+                }
+              } catch (e) {
+                cleanedPhoto.uploaded_at = new Date().toISOString();
+              }
+            } else {
+              cleanedPhoto.uploaded_at = new Date().toISOString();
+            }
+
+            return cleanedPhoto;
+          });
+
+        // Only update if we have valid photos
+        if (cleanedPhotos.length > 0) {
+          updates.photos = cleanedPhotos;
+        } else {
+          // If all photos were invalid, don't update photos field
+          delete updates.photos;
+        }
+      } catch (photoError) {
+        console.error("Error processing photos array:", photoError);
+        console.error("Photos array that caused error:", updates.photos);
+        // If photos processing fails, remove it from updates to prevent crash
+        delete updates.photos;
+      }
+    }
+
+    // Log updates before saving (for debugging)
+    if (process.env.NODE_ENV === "development") {
+      console.log("Attempting to update with:", {
+        keys: Object.keys(updates),
+        photosCount: updates.photos ? updates.photos.length : 0,
+      });
+    }
+
+    // Validate updates object before saving
+    try {
+      await PublicUser.update(updates, { where: { id: req.publicUserId } });
+      const user = await PublicUser.findByPk(req.publicUserId, {
+        attributes: { exclude: ["password", "otp"] },
+      });
+      return res.json({ success: true, data: user });
+    } catch (updateError) {
+      console.error("Database update error:", updateError);
+      console.error("Update error details:", {
+        message: updateError.message,
+        name: updateError.name,
+        stack: updateError.stack,
+      });
+      throw updateError; // Re-throw to be caught by outer catch
+    }
   } catch (err) {
     console.error("updateMe error:", err);
     console.error("Error details:", {
       message: err.message,
+      name: err.name,
       stack: err.stack,
       body: req.body,
-      file: req.file,
+      files: req.files
+        ? {
+            profile_image: req.files.profile_image
+              ? req.files.profile_image.length
+              : 0,
+            profile_images: req.files.profile_images
+              ? req.files.profile_images.length
+              : 0,
+          }
+        : null,
+      updatesKeys: Object.keys(updates || {}),
     });
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update profile",
-      error: process.env.NODE_ENV === "development" ? err.message : undefined,
-    });
+
+    // Ensure we always send a response
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update profile",
+        error: process.env.NODE_ENV === "development" ? err.message : undefined,
+      });
+    }
   }
 };
 
@@ -363,7 +537,7 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 exports.list = async (req, res) => {
   try {
     const {
-      city,
+      county,
       category,
       isVerified,
       online,
@@ -403,49 +577,86 @@ exports.list = async (req, res) => {
     if (!req.publicUserId) {
       where.category = category || { [Op.eq]: "Regular" };
       where.isVerified = false;
-      if (city) where.city = city;
+      if (county) where.county = county;
       if (online !== undefined) where.is_online = online === "true";
       if (q) {
         where[Op.or] = [
           { name: { [Op.iLike]: `%${q}%` } },
-          { city: { [Op.iLike]: `%${q}%` } },
+          { county: { [Op.iLike]: `%${q}%` } },
         ];
       }
     } else {
-      // Registered users: can see Regular users and verified premium users only
-      // Cannot see unverified premium category users (maintains exclusivity)
+      // Get current user to determine their category
+      const currentUser = await PublicUser.findByPk(req.publicUserId, {
+        attributes: ["category"],
+      });
+
+      if (!currentUser) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+
+      const isCurrentUserRegular = currentUser.category === "Regular";
+      const isCurrentUserPremium = premiumCategories.includes(
+        currentUser.category
+      );
 
       // Build base filters
       const baseFilters = {};
-      if (city) baseFilters.city = city;
+      if (county) baseFilters.county = county;
       if (online !== undefined) baseFilters.is_online = online === "true";
 
       // Handle category filter
       if (category) {
         if (premiumCategories.includes(category)) {
-          // Filtering by premium category: only show verified users
-          where.category = category;
-          where.isVerified = true;
-          Object.assign(where, baseFilters);
+          // Regular users can view premium categories but only verified users
+          if (isCurrentUserRegular) {
+            where.category = category;
+            where.isVerified = true; // Regular users can only see verified premium users
+            Object.assign(where, baseFilters);
+          } else {
+            // Premium users: filtering by premium category shows verified users only
+            where.category = category;
+            where.isVerified = true;
+            Object.assign(where, baseFilters);
+          }
         } else {
           // Filtering by Regular: show all Regular users
           where.category = category;
           Object.assign(where, baseFilters);
         }
       } else {
-        // No category filter: show Regular OR verified premium users
-        where[Op.and] = [
-          {
-            [Op.or]: [
-              { category: { [Op.eq]: "Regular" } },
-              {
-                category: { [Op.in]: premiumCategories },
-                isVerified: true,
-              },
-            ],
-          },
-          ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
-        ];
+        // No category filter
+        if (isCurrentUserRegular) {
+          // Regular users: show Regular AND verified premium users (view only, can't unlock)
+          where[Op.and] = [
+            {
+              [Op.or]: [
+                { category: { [Op.eq]: "Regular" } },
+                {
+                  category: { [Op.in]: premiumCategories },
+                  isVerified: true, // Regular users can only see verified premium users
+                },
+              ],
+            },
+            ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
+          ];
+        } else if (isCurrentUserPremium) {
+          // Premium users (verified or unverified): show Regular AND premium users
+          where[Op.and] = [
+            {
+              [Op.or]: [
+                { category: { [Op.eq]: "Regular" } },
+                {
+                  category: { [Op.in]: premiumCategories },
+                  // Premium users can see both verified and unverified premium users
+                },
+              ],
+            },
+            ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
+          ];
+        }
       }
 
       // Handle search query
@@ -454,7 +665,7 @@ exports.list = async (req, res) => {
         where[Op.and].push({
           [Op.or]: [
             { name: { [Op.iLike]: `%${q}%` } },
-            { city: { [Op.iLike]: `%${q}%` } },
+            { county: { [Op.iLike]: `%${q}%` } },
           ],
         });
       }
@@ -568,6 +779,10 @@ exports.list = async (req, res) => {
         if (user.photo_moderation_status !== "approved") {
           user.photo = null;
         }
+        // Filter photos array to only show approved photos
+        if (user.photos) {
+          user.photos = filterApprovedPhotos(user.photos);
+        }
         // Hide bio if not approved
         if (user.bio_moderation_status !== "approved") {
           user.bio = null;
@@ -593,6 +808,10 @@ exports.list = async (req, res) => {
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
+      }
+      // Filter photos array to only show approved photos
+      if (userData.photos) {
+        userData.photos = filterApprovedPhotos(userData.photos);
       }
       // Hide bio if not approved
       if (userData.bio_moderation_status !== "approved") {
@@ -667,6 +886,10 @@ exports.featured = async (req, res) => {
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
       }
+      // Filter photos array to only show approved photos
+      if (userData.photos) {
+        userData.photos = filterApprovedPhotos(userData.photos);
+      }
       // Hide bio if not approved
       if (userData.bio_moderation_status !== "approved") {
         userData.bio = null;
@@ -687,7 +910,7 @@ exports.featured = async (req, res) => {
 exports.adminList = async (req, res) => {
   try {
     const {
-      city,
+      county,
       category,
       isVerified,
       online,
@@ -696,14 +919,14 @@ exports.adminList = async (req, res) => {
       pageSize = 10,
     } = req.query;
     const where = {};
-    if (city) where.city = city;
+    if (county) where.county = county;
     if (category) where.category = category;
     if (isVerified !== undefined) where.isVerified = isVerified === "true";
     if (online !== undefined) where.is_online = online === "true";
     if (q) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${q}%` } },
-        { city: { [Op.iLike]: `%${q}%` } },
+        { county: { [Op.iLike]: `%${q}%` } },
         { email: { [Op.iLike]: `%${q}%` } },
         { phone: { [Op.iLike]: `%${q}%` } },
       ];
@@ -806,6 +1029,11 @@ exports.getById = async (req, res) => {
       safeUser.photo_moderation_status !== null
     ) {
       safeUser.photo = null;
+    }
+
+    // Filter photos array to only show approved photos
+    if (safeUser.photos) {
+      safeUser.photos = filterApprovedPhotos(safeUser.photos);
     }
 
     // Only show bio if approved

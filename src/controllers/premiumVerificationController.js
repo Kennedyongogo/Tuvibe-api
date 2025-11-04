@@ -1,197 +1,140 @@
-const { PremiumVerification, PublicUser } = require("../models");
+const { PublicUser } = require("../models");
 const { Op } = require("sequelize");
+const { deductTokens } = require("../services/tokenService");
 
-exports.requestVerification = async (req, res) => {
+// Upgrade from Regular to Premium category - charges tokens and automatically verifies
+exports.upgradeToPremium = async (req, res) => {
   try {
-    // one active request per user
-    const existing = await PremiumVerification.findOne({
-      where: {
-        public_user_id: req.publicUserId,
-        verification_status: "pending",
-      },
-    });
-    if (existing)
-      return res
-        .status(409)
-        .json({ success: false, message: "Request already pending" });
-    const record = await PremiumVerification.create({
-      public_user_id: req.publicUserId,
-      verification_status: "pending",
-    });
-    return res.status(201).json({ success: true, data: record });
-  } catch (err) {
-    console.error("requestVerification error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to request verification" });
-  }
-};
+    const { category } = req.body;
+    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
 
-exports.listRequests = async (_req, res) => {
-  try {
-    const rows = await PremiumVerification.findAll({
-      include: [
-        {
-          model: PublicUser,
-          as: "publicUser",
-          attributes: {
-            exclude: ["password", "otp"],
-          },
-        },
-      ],
-      order: [["createdAt", "DESC"]],
-    });
-    return res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error("listRequests error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch requests" });
-  }
-};
-
-exports.approve = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { notes } = req.body;
-    const rec = await PremiumVerification.findByPk(id);
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Request not found" });
-    
-    // Check if already approved
-    if (rec.verification_status === "approved") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Request is already approved" });
-    }
-    
-    // Update verification record
-    await rec.update({
-      verification_status: "approved",
-      admin_id: req.userId,
-      notes,
-    });
-    
-    // Update user's verified status
-    const [updatedCount] = await PublicUser.update(
-      { isVerified: true },
-      { where: { id: rec.public_user_id } }
-    );
-    
-    console.log(`Verification approved: User ${rec.public_user_id} is now verified. Admin: ${req.userId}`);
-    
-    // Fetch updated record with user data
-    const updatedRec = await PremiumVerification.findByPk(id, {
-      include: [
-        {
-          model: PublicUser,
-          as: "publicUser",
-          attributes: {
-            exclude: ["password", "otp"],
-          },
-        },
-      ],
-    });
-    
-    return res.json({ 
-      success: true, 
-      message: "Verification approved successfully",
-      data: updatedRec 
-    });
-  } catch (err) {
-    console.error("approve error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to approve" });
-  }
-};
-
-exports.reject = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { notes } = req.body;
-    const rec = await PremiumVerification.findByPk(id);
-    if (!rec)
-      return res
-        .status(404)
-        .json({ success: false, message: "Request not found" });
-    
-    // Check if already processed
-    if (rec.verification_status !== "pending") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Request has already been processed" });
-    }
-    
-    // Update verification record
-    await rec.update({
-      verification_status: "rejected",
-      admin_id: req.userId,
-      notes,
-    });
-    
-    console.log(`Verification rejected: Request ${id}. Admin: ${req.userId}`);
-    
-    // Fetch updated record with user data
-    const updatedRec = await PremiumVerification.findByPk(id, {
-      include: [
-        {
-          model: PublicUser,
-          as: "publicUser",
-          attributes: {
-            exclude: ["password", "otp"],
-          },
-        },
-      ],
-    });
-    
-    return res.json({ 
-      success: true, 
-      message: "Verification rejected",
-      data: updatedRec 
-    });
-  } catch (err) {
-    console.error("reject error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to reject" });
-  }
-};
-
-// Get current user's verification status
-exports.getMyStatus = async (req, res) => {
-  try {
-    const verification = await PremiumVerification.findOne({
-      where: { public_user_id: req.publicUserId },
-      order: [["createdAt", "DESC"]],
-    });
-    
-    if (!verification) {
-      return res.json({ 
-        success: true, 
-        data: { 
-          status: null, 
-          message: "No verification request found" 
-        } 
+    if (!category || !premiumCategories.includes(category)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid category. Must be one of: Sugar Mummy, Sponsor, Ben 10",
       });
     }
-    
-    return res.json({ 
-      success: true, 
+
+    // Get current user
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Check if user is already in a premium category
+    if (premiumCategories.includes(user.category)) {
+      return res.status(400).json({
+        success: false,
+        message: "User is already in a premium category",
+      });
+    }
+
+    // Check if user is Regular
+    if (user.category !== "Regular") {
+      return res.status(400).json({
+        success: false,
+        message: "Only Regular users can upgrade to premium",
+      });
+    }
+
+    // Define token cost for upgrading to premium category
+    const upgradeCostMap = {
+      "Sugar Mummy": 50,
+      Sponsor: 50,
+      "Ben 10": 30,
+    };
+    const cost = upgradeCostMap[category] || 50;
+
+    // Check token balance and deduct tokens
+    try {
+      await deductTokens(
+        req.publicUserId,
+        cost,
+        `Upgrade to ${category} category`
+      );
+    } catch (tokenError) {
+      if (tokenError.code === "INSUFFICIENT_TOKENS") {
+        return res.status(402).json({
+          success: false,
+          message: `Insufficient tokens. Required: ${cost} tokens`,
+        });
+      }
+      throw tokenError;
+    }
+
+    // Update user category to premium and automatically verify
+    // Payment of tokens serves as verification
+    await user.update({
+      category,
+      isVerified: true, // Automatically verified upon upgrade
+    });
+
+    // Fetch updated user
+    const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
+    console.log(
+      `User ${req.publicUserId} upgraded to ${category} category and automatically verified. Cost: ${cost} tokens`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully upgraded to ${category} category and verified`,
       data: {
-        id: verification.id,
-        status: verification.verification_status,
-        createdAt: verification.createdAt,
-        notes: verification.notes,
-      } 
+        user: updatedUser,
+        cost,
+        remainingBalance: updatedUser.token_balance,
+      },
     });
   } catch (err) {
-    console.error("getMyStatus error:", err);
+    console.error("upgradeToPremium error:", err);
     return res
       .status(500)
-      .json({ success: false, message: "Failed to fetch verification status" });
+      .json({ success: false, message: "Failed to upgrade to premium" });
+  }
+};
+
+// Get upgrade costs for premium categories
+exports.getUpgradeCosts = async (req, res) => {
+  try {
+    const upgradeCostMap = {
+      "Sugar Mummy": 50,
+      Sponsor: 50,
+      "Ben 10": 30,
+    };
+
+    // Format as array for easier frontend consumption
+    const categories = [
+      {
+        category: "Sugar Mummy",
+        cost: upgradeCostMap["Sugar Mummy"],
+        description: "Connect with verified Sugar Mummy profiles",
+      },
+      {
+        category: "Sponsor",
+        cost: upgradeCostMap["Sponsor"],
+        description: "Connect with verified Sponsor profiles",
+      },
+      {
+        category: "Ben 10",
+        cost: upgradeCostMap["Ben 10"],
+        description: "Connect with verified Ben 10 profiles",
+      },
+    ];
+
+    return res.json({
+      success: true,
+      data: { categories },
+    });
+  } catch (err) {
+    console.error("getUpgradeCosts error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch upgrade costs" });
   }
 };
 
@@ -211,11 +154,39 @@ exports.loungeByCategory = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Login required" });
     }
+
+    // Get current user to check if they are premium
+    const currentUser = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["category"],
+    });
+
+    if (!currentUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    const isCurrentUserPremium = premiumCategories.includes(
+      currentUser.category
+    );
+
+    // Only premium users (verified or unverified) can access Premium Lounge
+    if (!isCurrentUserPremium) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Please upgrade to premium to access Premium Lounge. Choose a premium category to upgrade.",
+        requiresUpgrade: true,
+      });
+    }
+
+    // Premium Lounge shows verified premium users only
     const rows = await PublicUser.findAll({
-      where: { 
-        category, 
+      where: {
+        category,
         isVerified: true,
-        id: { [Op.ne]: req.publicUserId } // Exclude current user
+        id: { [Op.ne]: req.publicUserId }, // Exclude current user
       },
       attributes: { exclude: ["password", "otp", "phone"] },
       order: [

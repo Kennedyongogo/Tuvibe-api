@@ -7,11 +7,12 @@ const {
 } = require("../middleware/publicAuth");
 const {
   uploadProfileImage,
+  uploadProfileImages,
   handleUploadError,
 } = require("../middleware/upload");
 
 // Auth
-router.post("/register", ctrl.register);
+router.post("/register", uploadProfileImage, handleUploadError, ctrl.register);
 router.post("/login", ctrl.login);
 router.post("/request-otp", ctrl.requestOtp);
 router.post("/verify-otp", ctrl.verifyOtp);
@@ -22,7 +23,7 @@ router.post("/logout", authenticatePublic, ctrl.logout);
 router.put(
   "/me",
   authenticatePublic,
-  uploadProfileImage,
+  uploadProfileImages,
   handleUploadError,
   ctrl.updateMe
 );

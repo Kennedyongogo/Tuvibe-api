@@ -8,6 +8,8 @@ const {
   rejectBio,
   bulkApprovePhotos,
   bulkApproveBios,
+  approveGalleryPhoto,
+  rejectGalleryPhoto,
 } = require("../controllers/moderationController");
 const {
   authenticateAdmin,
@@ -25,6 +27,10 @@ router.get("/pending", getPending);
 router.post("/photo/:userId/approve", approvePhoto);
 router.post("/photo/:userId/reject", rejectPhoto);
 
+// Gallery photo moderation
+router.post("/gallery-photo/:userId/:photoIndex/approve", approveGalleryPhoto);
+router.post("/gallery-photo/:userId/:photoIndex/reject", rejectGalleryPhoto);
+
 // Bio moderation
 router.post("/bio/:userId/approve", approveBio);
 router.post("/bio/:userId/reject", rejectBio);
@@ -34,4 +40,3 @@ router.post("/photos/bulk-approve", bulkApprovePhotos);
 router.post("/bios/bulk-approve", bulkApproveBios);
 
 module.exports = router;
-

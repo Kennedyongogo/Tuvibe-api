@@ -16,6 +16,46 @@ exports.getChatCost = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Target user not found" });
+
+    // Get requester user
+    const requester = await PublicUser.findByPk(req.publicUserId);
+    if (!requester) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Requester user not found" });
+    }
+
+    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    const isRequesterRegular = requester.category === "Regular";
+    const isRequesterPremium = premiumCategories.includes(requester.category);
+    const isTargetPremium = premiumCategories.includes(target.category);
+
+    // Check if regular user is trying to unlock premium user
+    if (isRequesterRegular && isTargetPremium) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Please upgrade to premium to unlock chat with premium users. Choose a premium category to upgrade.",
+        requiresUpgrade: true,
+      });
+    }
+
+    // Check if premium user is trying to unlock another premium user
+    // Premium users can only unlock premium users if target is verified (from Premium Lounge)
+    // Unverified premium users in explore cannot be unlocked by premium users
+    if (isRequesterPremium && isTargetPremium) {
+      // Allow if target is verified (they're from Premium Lounge)
+      if (!target.isVerified) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Premium users cannot unlock unverified premium users from explore. Please proceed to Premium Lounge to unlock verified premium users.",
+          requiresPremiumLounge: true,
+        });
+      }
+      // If target is verified, allow the unlock (they're from Premium Lounge)
+    }
+
     const cost = CATEGORY_COST[target.category] ?? 10;
     return res.json({ success: true, data: { cost } });
   } catch (err) {
@@ -33,11 +73,68 @@ exports.unlock = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "target_user_id required" });
+
+    // Get requester user
+    const requester = await PublicUser.findByPk(req.publicUserId);
+    if (!requester) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Requester user not found" });
+    }
+
     const target = await PublicUser.findByPk(target_user_id);
     if (!target)
       return res
         .status(404)
         .json({ success: false, message: "Target user not found" });
+
+    // Check if regular user is trying to unlock premium user
+    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    const isRequesterRegular = requester.category === "Regular";
+    const isRequesterPremium = premiumCategories.includes(requester.category);
+    const isTargetPremium = premiumCategories.includes(target.category);
+
+    if (isRequesterRegular && isTargetPremium) {
+      // Record failed attempt
+      await ChatUnlock.create({
+        public_user_id: req.publicUserId,
+        target_user_id,
+        token_cost: 0,
+        status: "failed",
+      });
+
+      return res.status(403).json({
+        success: false,
+        message:
+          "Please upgrade to premium to unlock chat with premium users. Choose a premium category to upgrade.",
+        requiresUpgrade: true,
+      });
+    }
+
+    // Check if premium user is trying to unlock another premium user
+    // Premium users can only unlock premium users if target is verified (from Premium Lounge)
+    // Unverified premium users in explore cannot be unlocked by premium users
+    if (isRequesterPremium && isTargetPremium) {
+      // Allow if target is verified (they're from Premium Lounge)
+      if (!target.isVerified) {
+        // Record failed attempt
+        await ChatUnlock.create({
+          public_user_id: req.publicUserId,
+          target_user_id,
+          token_cost: 0,
+          status: "failed",
+        });
+
+        return res.status(403).json({
+          success: false,
+          message:
+            "Premium users cannot unlock unverified premium users from explore. Please proceed to Premium Lounge to unlock verified premium users.",
+          requiresPremiumLounge: true,
+        });
+      }
+      // If target is verified, allow the unlock (they're from Premium Lounge)
+    }
+
     const cost = CATEGORY_COST[target.category] ?? 10;
     try {
       await deductTokens(
