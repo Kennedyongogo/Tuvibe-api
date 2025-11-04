@@ -36,7 +36,7 @@ const initializeModels = async () => {
     console.log("📋 Syncing tables...");
 
     await AdminUser.sync({ force: false, alter: false });
-    await PublicUser.sync({ force: false, alter: true });
+    await PublicUser.sync({ force: true, alter: false });
 
     await PremiumVerification.sync({ force: true, alter: false });
     await MarketItem.sync({ force: true, alter: false });

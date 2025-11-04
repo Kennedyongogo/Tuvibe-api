@@ -27,6 +27,7 @@ router.put(
   handleUploadError,
   ctrl.updateMe
 );
+router.delete("/me/photos/:photoIndex", authenticatePublic, ctrl.deletePhoto);
 
 // Wallet
 router.get("/wallet", authenticatePublic, ctrl.getWallet);

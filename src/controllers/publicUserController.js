@@ -1166,3 +1166,105 @@ exports.trackProfileView = async (req, res) => {
     });
   }
 };
+
+// Delete a photo from user's gallery
+exports.deletePhoto = async (req, res) => {
+  try {
+    const { photoIndex } = req.params;
+    const photoIndexNum = parseInt(photoIndex);
+
+    if (isNaN(photoIndexNum) || photoIndexNum < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid photo index",
+      });
+    }
+
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Ensure photos is always an array
+    let photos = [];
+    if (user.photos) {
+      if (Array.isArray(user.photos)) {
+        photos = [...user.photos]; // Create a copy to avoid mutating
+      } else if (typeof user.photos === "string") {
+        try {
+          photos = JSON.parse(user.photos);
+          if (!Array.isArray(photos)) {
+            photos = [];
+          }
+        } catch (e) {
+          photos = [];
+        }
+      }
+    }
+
+    console.log("=== DELETE PHOTO BACKEND DEBUG ===");
+    console.log("Photo index to delete:", photoIndexNum);
+    console.log("Photos before deletion:", photos);
+    console.log("Photos count before:", photos.length);
+
+    // Check if photo index is valid
+    if (photoIndexNum >= photos.length) {
+      console.log("Invalid photo index - out of bounds");
+      return res.status(404).json({
+        success: false,
+        message: "Photo not found",
+      });
+    }
+
+    // Remove the photo from the array
+    const deletedPhoto = photos[photoIndexNum];
+    photos.splice(photoIndexNum, 1);
+    
+    console.log("Photos after deletion:", photos);
+    console.log("Photos count after:", photos.length);
+
+    // Update user's photos array - ensure it's saved as JSONB array
+    try {
+      await user.update({ photos: photos }, { returning: true });
+      
+      // Reload user to verify the update
+      await user.reload();
+      console.log("User photos after update:", user.photos);
+      console.log("User photos count after update:", Array.isArray(user.photos) ? user.photos.length : "Not an array");
+      
+      // Verify the update worked
+      const updatedPhotos = user.photos;
+      if (Array.isArray(updatedPhotos) && updatedPhotos.length !== photos.length) {
+        console.error("WARNING: Photo count mismatch after update!");
+        console.error("Expected count:", photos.length, "Actual count:", updatedPhotos.length);
+      }
+    } catch (updateError) {
+      console.error("Error updating user photos:", updateError);
+      throw updateError;
+    }
+
+    // Return updated user data so frontend doesn't need to fetch again
+    const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
+    return res.json({
+      success: true,
+      message: "Photo deleted successfully",
+      data: {
+        deletedPhoto,
+        remainingPhotos: photos.length,
+        user: updatedUser, // Include updated user data
+      },
+    });
+  } catch (err) {
+    console.error("deletePhoto error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete photo",
+    });
+  }
+};
