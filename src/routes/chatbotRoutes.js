@@ -4,7 +4,7 @@ const chatbotController = require("../controllers/chatbotController");
 
 // Public endpoint - no authentication required for chatbot
 router.post("/ask", chatbotController.askQuestion);
+router.post("/chat", chatbotController.chat); // New endpoint matching frontend
 router.get("/capabilities", chatbotController.getCapabilities);
 
 module.exports = router;
-

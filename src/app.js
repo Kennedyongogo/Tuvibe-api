@@ -24,12 +24,13 @@ const moderationRoutes = require("./routes/moderationRoutes");
 const statsRoutes = require("./routes/statsRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
+const mlRoutes = require("./routes/mlRoutes");
 
 const app = express();
 
 // Middleware
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json({ limit: "500mb" }));
+app.use(express.urlencoded({ limit: "500mb", extended: true }));
 app.use(cors());
 
 // Static file serving
@@ -111,8 +112,10 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/moderation", moderationRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/chatbot", chatbotRoutes);
+app.use("/api/ml", mlRoutes);
 console.log("✅ TuVibe routes registered");
 console.log("✅ /api/chatbot route registered");
+console.log("✅ /api/ml route registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 
