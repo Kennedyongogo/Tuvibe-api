@@ -19,10 +19,7 @@ const storage = multer.diskStorage({
       file.fieldname === "profile_images"
     ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "profiles");
-    } else if (
-      file.fieldname === "image" ||
-      file.fieldname === "market_image"
-    ) {
+    } else if (file.fieldname === "market_images") {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "market");
     } else if (
       file.fieldname === "document" ||
@@ -160,6 +157,20 @@ const uploadInquiryAttachment = upload.single("inquiry_attachment");
 // Middleware for market item images
 const uploadMarketImage = upload.single("image");
 
+// Middleware for multiple market item images
+const uploadMarketImages = (req, res, next) => {
+  // Only process multipart/form-data requests
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.array("market_images", 10)(req, res, next);
+  } else {
+    // For JSON requests, skip file upload processing
+    next();
+  }
+};
+
 // Middleware for mixed uploads (multiple fields)
 const uploadMixed = upload.fields([
   { name: "profile_image", maxCount: 1 },
@@ -254,6 +265,7 @@ module.exports = {
   uploadProjectImages,
   uploadInquiryAttachment,
   uploadMarketImage,
+  uploadMarketImages,
   uploadMixed,
   handleUploadError,
   deleteFile,

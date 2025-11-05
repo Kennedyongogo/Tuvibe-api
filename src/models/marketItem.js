@@ -21,9 +21,10 @@ module.exports = (sequelize) => {
         type: DataTypes.DECIMAL(10, 2),
         allowNull: false,
       },
-      image: {
-        type: DataTypes.STRING,
+      images: {
+        type: DataTypes.JSON,
         allowNull: true,
+        defaultValue: [],
       },
       whatsapp_number: {
         type: DataTypes.STRING,

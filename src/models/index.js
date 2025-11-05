@@ -36,19 +36,19 @@ const initializeModels = async () => {
     console.log("📋 Syncing tables...");
 
     await AdminUser.sync({ force: false, alter: false });
-    await PublicUser.sync({ force: true, alter: false });
+    await PublicUser.sync({ force: false, alter: false });
 
-    await PremiumVerification.sync({ force: true, alter: false });
-    await MarketItem.sync({ force: true, alter: false });
+    await PremiumVerification.sync({ force: false, alter: false });
+    await MarketItem.sync({ force: false, alter: false });
 
-    await TokenTransaction.sync({ force: true, alter: false });
-    await ChatUnlock.sync({ force: true, alter: false });
-    await LookingForPost.sync({ force: true, alter: false });
-    await Favourite.sync({ force: true, alter: false });
-    await Payment.sync({ force: true, alter: false });
-    await Notification.sync({ force: true, alter: false });
-    await ProfileView.sync({ force: true, alter: false });
-    await Report.sync({ force: true, alter: false });
+    await TokenTransaction.sync({ force: false, alter: false });
+    await ChatUnlock.sync({ force: false, alter: false });
+    await LookingForPost.sync({ force: false, alter: false });
+    await Favourite.sync({ force: false, alter: false });
+    await Payment.sync({ force: false, alter: false });
+    await Notification.sync({ force: false, alter: false });
+    await ProfileView.sync({ force: false, alter: false });
+    await Report.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
