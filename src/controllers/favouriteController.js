@@ -4,6 +4,25 @@ exports.list = async (req, res) => {
   try {
     const rows = await Favourite.findAll({
       where: { public_user_id: req.publicUserId },
+      include: [
+        {
+          model: PublicUser,
+          as: "favouritedUser",
+          attributes: [
+            "id",
+            "name",
+            "photo",
+            "category",
+            "age",
+            "gender",
+            "bio",
+            "county",
+            "isVerified",
+            "is_online",
+            "last_seen_at",
+          ],
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
     return res.json({ success: true, data: rows });
@@ -42,7 +61,31 @@ exports.add = async (req, res) => {
       public_user_id: req.publicUserId,
       favourite_user_id,
     });
-    return res.status(201).json({ success: true, data: row });
+
+    // Return with user details
+    const favouriteWithUser = await Favourite.findByPk(row.id, {
+      include: [
+        {
+          model: PublicUser,
+          as: "favouritedUser",
+          attributes: [
+            "id",
+            "name",
+            "photo",
+            "category",
+            "age",
+            "gender",
+            "bio",
+            "county",
+            "isVerified",
+            "is_online",
+            "last_seen_at",
+          ],
+        },
+      ],
+    });
+
+    return res.status(201).json({ success: true, data: favouriteWithUser });
   } catch (err) {
     console.error("favourites add error:", err);
     return res

@@ -2,6 +2,7 @@ const natural = require("natural");
 const axios = require("axios");
 const { MarketItem, LookingForPost, PublicUser } = require("../models");
 const { Op } = require("sequelize");
+const dataService = require("./dataService");
 
 // Initialize NLP tools
 const tokenizer = new natural.WordTokenizer();
@@ -203,6 +204,11 @@ class MLService {
       searchTerm: null,
       priceRange: null,
       category: null,
+      gender: null,
+      ageRange: null,
+      verified: false,
+      featured: false,
+      premiumLounge: false,
     };
 
     const lowerQuestion = question.toLowerCase();
@@ -218,6 +224,11 @@ class MLService {
       lowerQuestion.includes("weekend picks")
     ) {
       entities.tag = "weekend_picks";
+    }
+
+    // Extract featured
+    if (lowerQuestion.includes("featured")) {
+      entities.featured = true;
     }
 
     // Extract date range
@@ -241,22 +252,92 @@ class MLService {
       entities.priceRange = parseFloat(priceMatch[1]);
     }
 
-    // Extract category
+    // Extract category (for users)
     const categories = ["regular", "sugar mummy", "sponsor", "ben 10"];
     for (const cat of categories) {
-      if (lowerQuestion.includes(cat)) {
-        entities.category = cat;
+      if (lowerQuestion.includes(cat.toLowerCase())) {
+        // Capitalize first letter of each word for proper category matching
+        entities.category =
+          cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
+        if (cat === "sugar mummy") {
+          entities.category = "Sugar Mummy";
+        } else if (cat === "ben 10") {
+          entities.category = "Ben 10";
+        }
         break;
       }
     }
 
-    // Extract search terms
-    const searchKeywords = ["find", "search", "looking for", "need", "want"];
+    // Extract gender
+    if (lowerQuestion.includes("male") || lowerQuestion.includes("man")) {
+      entities.gender = "Male";
+    } else if (
+      lowerQuestion.includes("female") ||
+      lowerQuestion.includes("woman")
+    ) {
+      entities.gender = "Female";
+    }
+
+    // Extract age range
+    const ageMatch = lowerQuestion.match(
+      /(\d+)\s*(?:to|-|and)\s*(\d+)\s*years?/i
+    );
+    if (ageMatch) {
+      entities.ageRange = {
+        min: parseInt(ageMatch[1]),
+        max: parseInt(ageMatch[2]),
+      };
+    } else {
+      const singleAgeMatch = lowerQuestion.match(/(\d+)\s*years?/i);
+      if (singleAgeMatch) {
+        const age = parseInt(singleAgeMatch[1]);
+        entities.ageRange = {
+          min: age - 2,
+          max: age + 2,
+        };
+      }
+    }
+
+    // Extract verified status
+    if (
+      lowerQuestion.includes("verified") ||
+      lowerQuestion.includes("premium")
+    ) {
+      entities.verified = true;
+    }
+
+    // Extract premium lounge query
+    if (
+      lowerQuestion.includes("premium lounge") ||
+      lowerQuestion.includes("premiumlounge") ||
+      (lowerQuestion.includes("premium") && lowerQuestion.includes("lounge"))
+    ) {
+      entities.premiumLounge = true;
+      entities.verified = true; // Premium lounge users are verified
+    }
+
+    // Extract search terms (improved)
+    const searchKeywords = [
+      "find",
+      "search",
+      "looking for",
+      "need",
+      "want",
+      "show me",
+      "get me",
+    ];
     for (const keyword of searchKeywords) {
       if (lowerQuestion.includes(keyword)) {
         const parts = lowerQuestion.split(keyword);
         if (parts.length > 1 && parts[1].trim().length > 0) {
-          entities.searchTerm = parts[1].trim().substring(0, 50);
+          // Extract meaningful search term (remove common words)
+          const searchPart = parts[1]
+            .trim()
+            .replace(/^(a|an|the|some|any)\s+/i, "")
+            .substring(0, 100);
+          if (searchPart.length > 0) {
+            entities.searchTerm = searchPart;
+          }
         }
         break;
       }
@@ -291,6 +372,7 @@ class MLService {
     entities,
     conversationHistory = []
   ) {
+    // Always prefer OpenAI for any question - it can handle any topic
     if (this.useOpenAI) {
       return await this.generateOpenAIResponse(
         intent,
@@ -300,6 +382,7 @@ class MLService {
         conversationHistory
       );
     } else {
+      // Enhanced NLP fallback that can handle general questions
       return this.generateNLPResponse(intent, data, question, entities);
     }
   }
@@ -313,23 +396,98 @@ class MLService {
     conversationHistory
   ) {
     try {
-      const systemPrompt = `You are a helpful assistant for TuVibe platform. You help users with:
-- Marketplace information (items, prices, hot deals, weekend picks)
-- Posts information (what people are looking for)
-- User profiles and matching
-- Platform features and help
-- Pricing and token information
+      // Build context from platform data if available
+      let contextInfo = "";
+      if (data) {
+        if (intent === "market_info") {
+          contextInfo = `\n\nCurrent marketplace data:\n- Total items: ${
+            data.totalItems || 0
+          }\n- Featured items: ${data.featuredItems || 0}\n- Hot deals: ${
+            data.hotDealsCount || 0
+          }\n- Weekend picks: ${data.weekendPicksCount || 0}`;
+          if (data.recentItems && data.recentItems.length > 0) {
+            contextInfo += `\nRecent items: ${data.recentItems
+              .slice(0, 3)
+              .map((item) => `${item.title} ($${item.price})`)
+              .join(", ")}`;
+          }
+        } else if (intent === "posts_info") {
+          contextInfo = `\n\nCurrent posts data:\n- Total posts: ${
+            data.totalPosts || 0
+          }`;
+          if (data.recentPosts && data.recentPosts.length > 0) {
+            contextInfo += `\nRecent posts: ${data.recentPosts
+              .slice(0, 3)
+              .map((post) => post.title)
+              .join(", ")}`;
+          }
+          if (data.allPosts && data.allPosts.length > 0) {
+            contextInfo += `\nAll matching posts: ${JSON.stringify(
+              data.allPosts.slice(0, 5).map((p) => ({
+                title: p.title,
+                content: p.content?.substring(0, 100),
+                author: p.author?.name,
+              }))
+            )}`;
+          }
+        } else if (intent === "user_info") {
+          contextInfo = `\n\nCurrent users data:\n- Total users: ${
+            data.totalUsers || 0
+          }\n- Verified users: ${data.verifiedUsers || 0}`;
+          if (data.categoryStats) {
+            contextInfo += `\nUsers by category: ${JSON.stringify(
+              data.categoryStats
+            )}`;
+          }
+          if (data.allUsers && data.allUsers.length > 0) {
+            contextInfo += `\nMatching users: ${JSON.stringify(
+              data.allUsers.slice(0, 5).map((u) => ({
+                name: u.name,
+                category: u.category,
+                age: u.age,
+              }))
+            )}`;
+          }
+        }
+      }
 
-Be friendly, concise, and helpful. Use the provided data to answer questions accurately.`;
+      const systemPrompt = `You are a helpful and friendly assistant for TuVibe platform. You can answer ANY question the user asks, whether it's about:
+- TuVibe platform features (marketplace, posts, chat, user profiles, tokens, pricing)
+- General questions about how to use the platform
+- Information about marketplace items, hot deals, weekend picks
+- Posts and what people are looking for
+- User profiles and matching
+- General knowledge and conversation
+- Any other topic the user wants to discuss
+
+Be friendly, helpful, and conversational. Answer questions naturally and provide useful information. If the question is about TuVibe platform, use the provided context data when available. For general questions, answer them normally as a helpful assistant would.${contextInfo}`;
+
+      // Build message history - include conversation history and current question
+      // Filter out empty messages and ensure proper formatting
+      const messageHistory = conversationHistory
+        .filter((msg) => msg && msg.text && msg.text.trim().length > 0)
+        .slice(-5) // Last 5 messages from history
+        .map((msg) => ({
+          role: msg.isBot ? "assistant" : "user",
+          content: msg.text.trim(),
+        }));
+
+      // Add current question if it's not already in the history
+      // (Check if last message in history is the same as current question)
+      const lastMessage = messageHistory[messageHistory.length - 1];
+      if (!lastMessage || lastMessage.content !== question.trim()) {
+        messageHistory.push({ role: "user", content: question.trim() });
+      }
 
       const messages = [
         { role: "system", content: systemPrompt },
-        ...conversationHistory.slice(-5).map((msg) => ({
-          role: msg.isBot ? "assistant" : "user",
-          content: msg.isBot ? msg.text : msg.text,
-        })),
-        { role: "user", content: question },
+        ...messageHistory,
       ];
+
+      console.log(
+        `📝 Conversation history (${messageHistory.length} messages):`,
+        messageHistory.map((m) => `${m.role}: ${m.content.substring(0, 50)}...`)
+      );
 
       const response = await axios.post(
         `${this.openaiBaseUrl}/chat/completions`,
@@ -337,7 +495,7 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
           model: process.env.OPENAI_MODEL || "gpt-3.5-turbo",
           messages: messages,
           temperature: 0.7,
-          max_tokens: 500,
+          max_tokens: 1000, // Increased to allow longer, more detailed responses
         },
         {
           headers: {
@@ -438,11 +596,160 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
         break;
 
       case "user_info":
-        response = `I can help you find users on TuVibe. You can:\n`;
-        response += `• Browse users in Explore\n`;
-        response += `• Search by category (Regular, Sugar Mummy, Sponsor, Ben 10)\n`;
-        response += `• Filter by location, age, and preferences\n`;
-        response += `• View premium users in Premium Lounge\n`;
+        if (data) {
+          // Check what type of user query it is
+          const lowerQ = question.toLowerCase();
+
+          // Premium lounge query
+          if (lowerQ.includes("premium") || lowerQ.includes("premium lounge")) {
+            const premiumUsers =
+              data.allUsers?.filter(
+                (u) =>
+                  ["Sugar Mummy", "Sponsor", "Ben 10"].includes(u.category) &&
+                  u.isVerified
+              ) || [];
+
+            if (premiumUsers.length > 0) {
+              response = `Here are the verified premium users in Premium Lounge:\n\n`;
+              premiumUsers.slice(0, 10).forEach((user) => {
+                response += `• ${user.name}`;
+                if (user.category) response += ` (${user.category})`;
+                if (user.age) response += `, Age: ${user.age}`;
+                response += `\n`;
+              });
+              if (premiumUsers.length > 10) {
+                response += `\n...and ${
+                  premiumUsers.length - 10
+                } more premium users`;
+              }
+            } else {
+              response = `There are currently no verified premium users in the Premium Lounge.`;
+            }
+          }
+          // Category query
+          else if (lowerQ.includes("categor") || lowerQ.includes("type")) {
+            response = `Here are the user categories on TuVibe:\n\n`;
+            if (data.categoryStats) {
+              Object.entries(data.categoryStats).forEach(
+                ([category, count]) => {
+                  response += `• ${category}: ${count} users\n`;
+                }
+              );
+            } else {
+              response += `• Regular: ${data.totalUsers || 0} users\n`;
+              response += `• Sugar Mummy: Available\n`;
+              response += `• Sponsor: Available\n`;
+              response += `• Ben 10: Available\n`;
+            }
+          }
+          // Specific category query
+          else if (
+            entities.category ||
+            lowerQ.includes("sugar mummy") ||
+            lowerQ.includes("sponsor") ||
+            lowerQ.includes("ben 10") ||
+            lowerQ.includes("regular")
+          ) {
+            const categoryFilter =
+              entities.category ||
+              (lowerQ.includes("sugar mummy")
+                ? "Sugar Mummy"
+                : lowerQ.includes("sponsor")
+                ? "Sponsor"
+                : lowerQ.includes("ben 10")
+                ? "Ben 10"
+                : "Regular");
+
+            const categoryUsers =
+              data.allUsers?.filter((u) => u.category === categoryFilter) || [];
+
+            if (categoryUsers.length > 0) {
+              response = `Here are the ${categoryFilter} users:\n\n`;
+              categoryUsers.slice(0, 10).forEach((user) => {
+                response += `• ${user.name}`;
+                if (user.age) response += `, Age: ${user.age}`;
+                if (user.gender) response += `, ${user.gender}`;
+                if (user.isVerified) response += ` ✓ Verified`;
+                response += `\n`;
+              });
+              if (categoryUsers.length > 10) {
+                response += `\n...and ${
+                  categoryUsers.length - 10
+                } more ${categoryFilter} users`;
+              }
+            } else {
+              response = `There are currently no ${categoryFilter} users registered.`;
+            }
+          }
+          // General user list query
+          else if (
+            lowerQ.includes("who are") ||
+            lowerQ.includes("list users") ||
+            lowerQ.includes("show users")
+          ) {
+            if (data.allUsers && data.allUsers.length > 0) {
+              response = `Here are the users on TuVibe:\n\n`;
+              response += `• Total users: ${data.totalUsers || 0}\n`;
+              response += `• Verified users: ${data.verifiedUsers || 0}\n\n`;
+
+              response += `Recent users:\n`;
+              data.recentUsers.slice(0, 10).forEach((user) => {
+                response += `• ${user.name}`;
+                if (user.category) response += ` (${user.category})`;
+                if (user.age) response += `, Age: ${user.age}`;
+                if (user.isVerified) response += ` ✓ Verified`;
+                response += `\n`;
+              });
+            } else {
+              response = `Currently, there are ${
+                data.totalUsers || 0
+              } users registered on TuVibe.`;
+            }
+          }
+          // Default: Show stats and guidance
+          else {
+            response = `Here's information about users on TuVibe:\n\n`;
+            response += `• Total users: ${data.totalUsers || 0}\n`;
+            response += `• Verified users: ${data.verifiedUsers || 0}\n`;
+
+            if (
+              data.categoryStats &&
+              Object.keys(data.categoryStats).length > 0
+            ) {
+              response += `\nUsers by category:\n`;
+              Object.entries(data.categoryStats).forEach(
+                ([category, count]) => {
+                  response += `  - ${category}: ${count} users\n`;
+                }
+              );
+            }
+
+            if (data.recentUsers && data.recentUsers.length > 0) {
+              response += `\nRecent users:\n`;
+              data.recentUsers.slice(0, 5).forEach((user) => {
+                response += `  - ${user.name} (${user.category || "Regular"})`;
+                if (user.isVerified) response += ` ✓`;
+                response += `\n`;
+              });
+            }
+
+            response += `\nYou can ask me:\n`;
+            response += `• "Who are in premium lounge?" - See premium users\n`;
+            response += `• "What are the user categories?" - See category breakdown\n`;
+            response += `• "Show me Sugar Mummy users" - See specific category\n`;
+          }
+        } else {
+          // No data available, provide general guidance
+          response = `I can help you find users on TuVibe. You can:\n`;
+          response += `• Browse users in Explore\n`;
+          response += `• Search by category (Regular, Sugar Mummy, Sponsor, Ben 10)\n`;
+          response += `• Filter by location, age, and preferences\n`;
+          response += `• View premium users in Premium Lounge\n\n`;
+          response += `Try asking me:\n`;
+          response += `• "Who are the users?" - See all users\n`;
+          response += `• "Who are in premium lounge?" - See premium users\n`;
+          response += `• "What are the user categories?" - See category breakdown\n`;
+        }
         break;
 
       case "pricing_info":
@@ -473,13 +780,40 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
 
       case "general_help":
       default:
-        response = `I'm here to help! I can provide information about:\n\n`;
+        // For general questions, provide a helpful response that acknowledges the question
+        // and tries to answer it or provide guidance
+        response = `I'm here to help! `;
+
+        // Try to provide a helpful response based on the question
+        const lowerQ = question.toLowerCase();
+        if (
+          lowerQ.includes("how") ||
+          lowerQ.includes("what") ||
+          lowerQ.includes("why") ||
+          lowerQ.includes("when") ||
+          lowerQ.includes("where")
+        ) {
+          response += `Regarding your question about "${question}", I can help you with information about TuVibe platform. `;
+        }
+
+        response += `I can provide information about:\n\n`;
         response += `🛍️ **Marketplace**: Items available for sale, hot deals, weekend picks\n`;
         response += `📋 **Posts**: What people are looking for\n`;
         response += `👥 **Users**: Finding and connecting with members\n`;
         response += `💰 **Pricing**: Token costs and payment information\n`;
         response += `ℹ️ **Platform Info**: How to use TuVibe\n\n`;
-        response += `Try asking me:\n`;
+
+        // For general questions, be more conversational
+        if (
+          !lowerQ.includes("market") &&
+          !lowerQ.includes("post") &&
+          !lowerQ.includes("user") &&
+          !lowerQ.includes("platform")
+        ) {
+          response += `I see you asked "${question}". While I can help with TuVibe-related questions, for the best experience with general questions, please make sure OpenAI API is configured. `;
+        }
+
+        response += `\nTry asking me:\n`;
         response += `• "What's for sale?"\n`;
         response += `• "Show me hot deals"\n`;
         response += `• "What are people looking for?"\n`;
@@ -491,7 +825,7 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
     return response.trim();
   }
 
-  // Get data based on intent
+  // Get data based on intent using dataService
   async getDataForIntent(intent, entities) {
     try {
       switch (intent) {
@@ -499,6 +833,8 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
           return await this.getMarketInfo(entities);
         case "posts_info":
           return await this.getPostsInfo(entities);
+        case "user_info":
+          return await this.getUsersInfo(entities);
         default:
           return null;
       }
@@ -508,128 +844,133 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
     }
   }
 
-  // Get market information
+  // Get market information using dataService
   async getMarketInfo(entities = {}) {
-    const where = {};
+    try {
+      // Get market items with filters
+      const filters = {
+        tag: entities.tag,
+        searchTerm: entities.searchTerm,
+        dateRange: entities.dateRange,
+        limit: 10,
+        featured: entities.featured,
+      };
 
-    if (entities.tag) {
-      where.tag = entities.tag;
-    }
-
-    if (entities.dateRange) {
-      const now = new Date();
-      let startDate;
-      if (entities.dateRange === "today") {
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      } else if (entities.dateRange === "week") {
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 7);
-      } else if (entities.dateRange === "month") {
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
+      if (entities.priceRange) {
+        filters.priceRange = {
+          max: entities.priceRange,
+        };
       }
-      if (startDate) {
-        where.createdAt = { [Op.gte]: startDate };
-      }
+
+      const items = await dataService.getMarketItems(filters);
+      const stats = await dataService.getMarketStats();
+
+      return {
+        totalItems: stats.totalItems,
+        featuredItems: stats.featuredItems,
+        hotDealsCount: stats.hotDealsCount,
+        weekendPicksCount: stats.weekendPicksCount,
+        averagePrice: stats.averagePrice,
+        recentItems: items.slice(0, 5).map((item) => ({
+          title: item.title,
+          price: item.price,
+          tag: item.tag_label,
+          isFeatured: item.is_featured,
+        })),
+        allItems: items, // Include all items for OpenAI context
+      };
+    } catch (error) {
+      console.error("Error getting market info:", error);
+      return null;
     }
-
-    if (entities.priceRange) {
-      where.price = { [Op.lte]: entities.priceRange };
-    }
-
-    const totalItems = await MarketItem.count({ where });
-    const featuredItems = await MarketItem.count({
-      where: { ...where, is_featured: true },
-    });
-
-    const hotDealsCount = await MarketItem.count({
-      where: { ...where, tag: "hot_deals" },
-    });
-
-    const weekendPicksCount = await MarketItem.count({
-      where: { ...where, tag: "weekend_picks" },
-    });
-
-    const recentItems = await MarketItem.findAll({
-      where,
-      attributes: ["id", "title", "price", "tag", "is_featured", "createdAt"],
-      order: [["createdAt", "DESC"]],
-      limit: 5,
-      raw: true,
-    });
-
-    return {
-      totalItems,
-      featuredItems,
-      hotDealsCount,
-      weekendPicksCount,
-      recentItems: recentItems.map((item) => ({
-        title: item.title,
-        price: item.price,
-        tag:
-          item.tag === "hot_deals"
-            ? "Hot Deals"
-            : item.tag === "weekend_picks"
-            ? "Weekend Picks"
-            : null,
-        isFeatured: item.is_featured,
-      })),
-    };
   }
 
-  // Get posts information
+  // Get posts information using dataService
   async getPostsInfo(entities = {}) {
-    const where = {};
+    try {
+      const filters = {
+        searchTerm: entities.searchTerm,
+        dateRange: entities.dateRange,
+        limit: 10,
+      };
 
-    if (entities.dateRange) {
-      const now = new Date();
-      let startDate;
-      if (entities.dateRange === "today") {
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      } else if (entities.dateRange === "week") {
-        startDate = new Date(now);
-        startDate.setDate(now.getDate() - 7);
-      } else if (entities.dateRange === "month") {
-        startDate = new Date(now);
-        startDate.setMonth(now.getMonth() - 1);
-      }
-      if (startDate) {
-        where.createdAt = { [Op.gte]: startDate };
-      }
+      const posts = await dataService.getPosts(filters);
+      const stats = await dataService.getPostsStats();
+
+      return {
+        totalPosts: stats.totalPosts,
+        recentPosts: posts.slice(0, 5).map((post) => ({
+          title: post.title,
+          description: post.content
+            ? post.content.substring(0, 100) + "..."
+            : null,
+          author: post.author ? post.author.name : null,
+        })),
+        allPosts: posts, // Include all posts for OpenAI context
+      };
+    } catch (error) {
+      console.error("Error getting posts info:", error);
+      return null;
     }
+  }
 
-    if (entities.searchTerm) {
-      where[Op.or] = [
-        { title: { [Op.iLike]: `%${entities.searchTerm}%` } },
-        { description: { [Op.iLike]: `%${entities.searchTerm}%` } },
-      ];
+  // Get users information using dataService
+  async getUsersInfo(entities = {}) {
+    try {
+      const filters = {
+        category: entities.category,
+        gender: entities.gender,
+        searchTerm: entities.searchTerm,
+        limit: entities.premiumLounge ? 50 : 10, // Get more users for premium lounge
+        verified: entities.verified || entities.premiumLounge,
+      };
+
+      // If premium lounge query, filter for premium categories
+      if (entities.premiumLounge) {
+        // Premium lounge includes Sugar Mummy, Sponsor, and Ben 10
+        // We'll filter after fetching to get all premium users
+        filters.verified = true; // Premium lounge users must be verified
+      }
+
+      if (entities.ageRange) {
+        filters.ageRange = entities.ageRange;
+      }
+
+      let users = await dataService.getUsers(filters);
+      const stats = await dataService.getUsersStats();
+
+      // If premium lounge, filter to only premium categories
+      if (entities.premiumLounge) {
+        users = users.filter(
+          (u) =>
+            ["Sugar Mummy", "Sponsor", "Ben 10"].includes(u.category) &&
+            u.isVerified
+        );
+      }
+
+      return {
+        totalUsers: stats.totalUsers,
+        verifiedUsers: stats.verifiedUsers,
+        categoryStats: stats.categoryStats,
+        recentUsers: users.slice(0, 5).map((user) => ({
+          name: user.name,
+          category: user.category,
+          age: user.age,
+          gender: user.gender,
+          isVerified: user.isVerified,
+        })),
+        allUsers: users, // Include all users for OpenAI context
+      };
+    } catch (error) {
+      console.error("Error getting users info:", error);
+      return null;
     }
-
-    const totalPosts = await LookingForPost.count({ where });
-
-    const recentPosts = await LookingForPost.findAll({
-      where,
-      attributes: ["id", "title", "description", "createdAt"],
-      order: [["createdAt", "DESC"]],
-      limit: 5,
-      raw: true,
-    });
-
-    return {
-      totalPosts,
-      recentPosts: recentPosts.map((post) => ({
-        title: post.title,
-        description: post.description
-          ? post.description.substring(0, 100) + "..."
-          : null,
-      })),
-    };
   }
 
   // Main method to process questions with ML
   async processQuestionWithML(question, conversationHistory = []) {
     try {
-      // Detect intent with ML
+      // Detect intent with ML (for informational purposes, but don't restrict based on it)
       const { intent, confidence } = this.detectIntent(
         question,
         conversationHistory
@@ -643,10 +984,18 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
       );
       console.log(`📊 Extracted entities:`, entities);
 
-      // Get relevant data
-      const data = await this.getDataForIntent(intent, entities);
+      // Get relevant data for platform-specific intents using dataService
+      // This allows the ML service to fetch real-time data from your models
+      let data = null;
+      if (
+        intent === "market_info" ||
+        intent === "posts_info" ||
+        intent === "user_info"
+      ) {
+        data = await this.getDataForIntent(intent, entities);
+      }
 
-      // Generate response
+      // Generate response - OpenAI will handle any question, not just platform-specific ones
       const answer = await this.generateResponse(
         intent,
         data,
@@ -655,8 +1004,11 @@ Be friendly, concise, and helpful. Use the provided data to answer questions acc
         conversationHistory
       );
 
-      // Generate suggestions
-      const suggestions = this.generateSuggestions(intent);
+      // Generate suggestions (only for platform-related intents)
+      const suggestions =
+        intent !== "general_help" && confidence > 0.3
+          ? this.generateSuggestions(intent)
+          : [];
 
       return {
         success: true,
