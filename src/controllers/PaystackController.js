@@ -110,6 +110,9 @@ exports.initializePayment = async (req, res) => {
       success: true,
       authorization_url: data.data.authorization_url,
       reference: data.data.reference,
+      paystack_amount: data.data.amount,
+      currency: data.data.currency,
+      access_code: data.data.access_code,
     });
   } catch (err) {
     console.error("initializePayment error:", err);
@@ -159,7 +162,19 @@ exports.verifyPayment = async (req, res) => {
       });
     }
     const email = data.data.customer?.email;
-    const userId = req.publicUserId;
+    const userId = req.publicUserId || data.data.metadata?.userId;
+
+    if (!userId) {
+      console.error(
+        "verifyPayment missing userId for reference",
+        reference,
+        data.data.metadata
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Unable to determine user for this transaction",
+      });
+    }
 
     const existing = await TokenTransaction.findOne({ where: { reference } });
     if (existing) {
