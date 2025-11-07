@@ -38,10 +38,20 @@ class MLService {
       });
 
       // Load posts
-      const posts = await LookingForPost.findAll({
-        attributes: ["id", "title", "description"],
+      const rawPosts = await LookingForPost.findAll({
+        attributes: ["id", "content"],
         limit: 100,
+        raw: true,
       });
+
+      const posts = rawPosts.map((post) => ({
+        id: post.id,
+        title: post.content
+          ? post.content.substring(0, 60).trim() || "Looking For"
+          : "Looking For",
+        description: post.content,
+        content: post.content,
+      }));
 
       // Build knowledge base
       this.knowledgeBase = [
