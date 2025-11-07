@@ -19,6 +19,8 @@ const marketItemRoutes = require("./routes/marketItemRoutes");
 const lookingForPostRoutes = require("./routes/lookingForPostRoutes");
 const favouriteRoutes = require("./routes/favouriteRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
+const paystackRoutes = require("./routes/paystackRoutes");
+const paystackWebhookRoutes = require("./routes/paystackWebhook");
 const notificationRoutes = require("./routes/notificationRoutes");
 const moderationRoutes = require("./routes/moderationRoutes");
 const statsRoutes = require("./routes/statsRoutes");
@@ -29,7 +31,14 @@ const mlRoutes = require("./routes/mlRoutes");
 const app = express();
 
 // Middleware
-app.use(express.json({ limit: "500mb" }));
+app.use(
+  express.json({
+    limit: "500mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf.toString();
+    },
+  })
+);
 app.use(express.urlencoded({ limit: "500mb", extended: true }));
 app.use(cors());
 
@@ -108,6 +117,8 @@ app.use("/api/market", marketItemRoutes);
 app.use("/api/posts", lookingForPostRoutes);
 app.use("/api/favourites", favouriteRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/paystack/webhook", paystackWebhookRoutes);
+app.use("/api/paystack", paystackRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/moderation", moderationRoutes);
 app.use("/api/reports", reportRoutes);
