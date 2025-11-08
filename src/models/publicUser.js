@@ -28,6 +28,7 @@ module.exports = (sequelize) => {
           min: 1900,
           isInt: true,
         },
+        field: "birth_year",
       },
       county: {
         type: DataTypes.STRING,
@@ -79,42 +80,32 @@ module.exports = (sequelize) => {
       last_seen_at: {
         type: DataTypes.DATE,
         allowNull: true,
+        field: "last_seen_at",
       },
       logged_in_at: {
         type: DataTypes.DATE,
         allowNull: true,
+        field: "logged_in_at",
       },
       logged_out_at: {
         type: DataTypes.DATE,
         allowNull: true,
+        field: "logged_out_at",
       },
       is_online: {
         type: DataTypes.BOOLEAN,
         defaultValue: false,
-      },
-      boost_score: {
-        type: DataTypes.INTEGER,
-        defaultValue: 0,
-      },
-      is_featured_until: {
-        type: DataTypes.DATE,
-        allowNull: true,
-      },
-      isVerified: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: false,
+        field: "is_online",
       },
       token_balance: {
         type: DataTypes.DECIMAL(10, 2),
         defaultValue: 0,
+        field: "token_balance",
       },
-      otp: {
-        type: DataTypes.STRING,
-        allowNull: true,
-      },
-      otp_expiry: {
-        type: DataTypes.DATE,
-        allowNull: true,
+      isVerified: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        field: "is_verified",
       },
       latitude: {
         type: DataTypes.DECIMAL(10, 8),

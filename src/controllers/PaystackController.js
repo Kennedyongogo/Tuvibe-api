@@ -1,9 +1,11 @@
+const { randomUUID } = require("crypto");
 const fetch = (...args) =>
   import("node-fetch").then(({ default: fetchFn }) => fetchFn(...args));
 require("dotenv").config();
 
 const { TokenTransaction } = require("../models");
 const { addTokens } = require("../services/tokenService");
+const { TOKENS_PER_KSH } = require("../config/pricing");
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_CALLBACK_URL =
@@ -14,8 +16,11 @@ const PAYSTACK_MINOR_UNIT_FACTOR = Number(
   process.env.PAYSTACK_MINOR_UNIT_FACTOR || "100"
 );
 const PAYSTACK_TOKENS_PER_UNIT = Number(
-  process.env.PAYSTACK_TOKENS_PER_UNIT || "1"
+  process.env.PAYSTACK_TOKENS_PER_UNIT || String(TOKENS_PER_KSH)
 );
+const PAYSTACK_BYPASS =
+  process.env.PAYSTACK_BYPASS === "true" ||
+  (process.env.NODE_ENV || "").toLowerCase() === "development";
 
 if (
   !Number.isFinite(PAYSTACK_MINOR_UNIT_FACTOR) ||
@@ -69,9 +74,45 @@ exports.initializePayment = async (req, res) => {
         .json({ success: false, message: "Email and amount are required" });
     }
 
+    const tokensRequested = Number(amount);
+    if (!Number.isFinite(tokensRequested) || tokensRequested <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Amount must be a positive number",
+      });
+    }
+
+    if (PAYSTACK_BYPASS) {
+      try {
+        const reference = `dev-${randomUUID()}`;
+        const balance = await addTokens(req.publicUserId, tokensRequested, {
+          payment_method: "system",
+          reference,
+          description: "Token top-up (dev bypass)",
+        });
+
+        return res.status(200).json({
+          success: true,
+          bypassed: true,
+          authorization_url: null,
+          reference,
+          credited_tokens: tokensRequested,
+          paystack_amount: tokensRequested,
+          currency: PAYSTACK_CURRENCY,
+          balance,
+        });
+      } catch (tokenErr) {
+        console.error("initializePayment bypass credit error:", tokenErr);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to credit tokens in bypass mode",
+        });
+      }
+    }
+
     let paystackAmount;
     try {
-      paystackAmount = toPaystackAmount(amount);
+      paystackAmount = toPaystackAmount(tokensRequested);
     } catch (conversionErr) {
       console.error("initializePayment amount error:", conversionErr);
       return res.status(400).json({
@@ -129,6 +170,34 @@ exports.verifyPayment = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Reference required" });
+    }
+
+    if (PAYSTACK_BYPASS) {
+      try {
+        const transaction = await TokenTransaction.findOne({
+          where: { reference },
+        });
+        if (!transaction) {
+          return res.status(404).json({
+            success: false,
+            bypassed: true,
+            message: "No transaction found for reference in bypass mode",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          bypassed: true,
+          message: "Paystack bypass active; verification skipped",
+          data: transaction,
+        });
+      } catch (lookupErr) {
+        console.error("verifyPayment bypass lookup error:", lookupErr);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to confirm transaction in bypass mode",
+        });
+      }
     }
 
     const response = await fetch(

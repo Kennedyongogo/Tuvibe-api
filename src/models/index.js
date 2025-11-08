@@ -13,6 +13,7 @@ const Payment = require("./payment")(sequelize);
 const Notification = require("./notification")(sequelize);
 const ProfileView = require("./profileView")(sequelize);
 const Report = require("./report")(sequelize);
+const ProfileBoost = require("./profileBoost")(sequelize);
 
 const models = {
   AdminUser,
@@ -27,6 +28,7 @@ const models = {
   Notification,
   ProfileView,
   Report,
+  ProfileBoost,
 };
 
 // Initialize models in correct order (parent tables first)
@@ -49,6 +51,7 @@ const initializeModels = async () => {
     await Notification.sync({ force: false, alter: false });
     await ProfileView.sync({ force: false, alter: false });
     await Report.sync({ force: false, alter: false });
+    await ProfileBoost.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -212,6 +215,16 @@ const setupAssociations = () => {
     models.Report.belongsTo(models.AdminUser, {
       foreignKey: "admin_id",
       as: "handledBy",
+    });
+
+    // PublicUser ↔ ProfileBoost
+    models.PublicUser.hasMany(models.ProfileBoost, {
+      foreignKey: "public_user_id",
+      as: "profileBoosts",
+    });
+    models.ProfileBoost.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "owner",
     });
 
     console.log("✅ All associations set up successfully");

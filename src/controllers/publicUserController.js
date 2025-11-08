@@ -2,7 +2,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op, Sequelize } = require("sequelize");
 const config = require("../config/config");
-const { PublicUser, TokenTransaction, ProfileView } = require("../models");
+const { PublicUser, TokenTransaction, ProfileView, ProfileBoost } = require("../models");
 const { sequelize } = require("../config/database");
 const {
   computeAgeFromBirthYear,
@@ -24,6 +24,33 @@ const filterApprovedPhotos = (photos) => {
   }
   return photos.filter((photo) => photo.moderation_status === "approved");
 };
+
+const activeBoostUntilSubquery = `(
+  SELECT pb.ends_at
+  FROM profile_boosts pb
+  WHERE pb.public_user_id = "PublicUser"."id"
+    AND pb.status = 'active'
+    AND pb.ends_at > NOW()
+  ORDER BY pb.ends_at DESC
+  LIMIT 1
+)`;
+
+const activeBoostExistsLiteral = Sequelize.literal(`(
+  SELECT COUNT(pb.id)
+  FROM profile_boosts pb
+  WHERE pb.public_user_id = "PublicUser"."id"
+    AND pb.status = 'active'
+    AND pb.ends_at > NOW()
+) > 0`);
+
+const boostHistoryExistsLiteral = Sequelize.literal(`(
+  SELECT COUNT(pb.id)
+  FROM profile_boosts pb
+  WHERE pb.public_user_id = "PublicUser"."id"
+) > 0`);
+
+const activeBoostPresenceOrderLiteral = Sequelize.literal(`CASE WHEN ${activeBoostUntilSubquery} IS NULL THEN 0 ELSE 1 END`);
+const activeBoostUntilOrderLiteral = Sequelize.literal(`COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`);
 
 exports.register = async (req, res) => {
   try {
@@ -756,7 +783,10 @@ exports.list = async (req, res) => {
     let queryOptions = {
       where,
       attributes: {
-        exclude: ["password", "otp", "phone"], // mask phone in listings
+        exclude: ["password", "otp", "phone"],
+        include: [
+          [Sequelize.literal(activeBoostUntilSubquery), "active_boost_until"],
+        ],
       },
     };
 
@@ -764,24 +794,8 @@ exports.list = async (req, res) => {
     if (!isNearbySearch) {
       queryOptions.order = [
         ["isVerified", "DESC"],
-        // Prioritize active boosts: profiles with is_featured_until > current time appear first
-        [
-          Sequelize.literal(`CASE 
-            WHEN "PublicUser"."is_featured_until" IS NULL THEN 0 
-            WHEN "PublicUser"."is_featured_until" > NOW() THEN 1 
-            ELSE 0 
-          END`),
-          "DESC",
-        ],
-        // Then sort by is_featured_until DESC (future dates first, NULLs last)
-        // Note: Sequelize doesn't support NULLS LAST directly, so we use COALESCE to push NULLs to end
-        [
-          Sequelize.literal(
-            `COALESCE("PublicUser"."is_featured_until", '1970-01-01'::timestamp)`
-          ),
-          "DESC",
-        ],
-        ["boost_score", "DESC"],
+        [activeBoostPresenceOrderLiteral, "DESC"],
+        [activeBoostUntilOrderLiteral, "DESC"],
         ["createdAt", "DESC"],
       ];
       queryOptions.limit = limit;
@@ -820,6 +834,10 @@ exports.list = async (req, res) => {
           if (userModel) {
             const userJson = formatUserForResponse(userModel);
             userJson.distance = user.distance;
+            const activeBoostUntil = userModel.get("active_boost_until");
+            if (activeBoostUntil) {
+              userJson.active_boost_until = activeBoostUntil;
+            }
             return userJson;
           }
           return user;
@@ -860,6 +878,10 @@ exports.list = async (req, res) => {
     // Filter out unapproved photos and bios for public listings
     const filteredRows = processedRows.map((user) => {
       const userData = formatUserForResponse(user);
+      const activeBoostUntil = user.get("active_boost_until");
+      if (activeBoostUntil) {
+        userData.active_boost_until = activeBoostUntil;
+      }
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
@@ -899,8 +921,8 @@ exports.featured = async (req, res) => {
     const now = new Date();
     const where = {
       [Op.or]: [
-        { is_featured_until: { [Op.gt]: now } },
-        { boost_score: { [Op.gt]: 0 } },
+        Sequelize.where(activeBoostExistsLiteral, true),
+        Sequelize.where(boostHistoryExistsLiteral, true),
         { isVerified: true },
       ],
     };
@@ -926,10 +948,16 @@ exports.featured = async (req, res) => {
     }
     const rows = await PublicUser.findAll({
       where,
-      attributes: { exclude: ["password", "otp", "phone"] },
+      attributes: {
+        exclude: ["password", "otp", "phone"],
+        include: [
+          [Sequelize.literal(activeBoostUntilSubquery), "active_boost_until"],
+        ],
+      },
       order: [
-        ["is_featured_until", "DESC"],
-        ["boost_score", "DESC"],
+        [activeBoostPresenceOrderLiteral, "DESC"],
+        [activeBoostUntilOrderLiteral, "DESC"],
+        ["createdAt", "DESC"],
       ],
       limit: 20,
     });
@@ -937,6 +965,10 @@ exports.featured = async (req, res) => {
     // Filter out unapproved photos and bios for featured listings
     const filteredRows = rows.map((user) => {
       const userData = formatUserForResponse(user);
+      const activeBoostUntil = user.get("active_boost_until");
+      if (activeBoostUntil) {
+        userData.active_boost_until = activeBoostUntil;
+      }
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
@@ -967,27 +999,28 @@ exports.featuredBoosts = async (req, res) => {
     const now = new Date();
     const limit = Math.min(Number(req.query.limit) || 50, 100);
 
-    const where = {
-      is_featured_until: { [Op.gt]: now },
-      boost_score: { [Op.gt]: 0 },
-    };
-
-    if (req.publicUserId) {
-      where.id = { [Op.ne]: req.publicUserId };
-    }
-
-    const rows = await PublicUser.findAll({
-      where,
-      attributes: { exclude: ["password", "otp", "phone"] },
-      order: [
-        ["is_featured_until", "DESC"],
-        ["updatedAt", "DESC"],
+    const boosts = await ProfileBoost.findAll({
+      where: {
+        status: "active",
+        ends_at: { [Op.gt]: now },
+      },
+      include: [
+        {
+          model: PublicUser,
+          as: "owner",
+          attributes: {
+            exclude: ["password", "otp", "phone"],
+          },
+        },
       ],
+      order: [["ends_at", "DESC"], ["updatedAt", "DESC"]],
       limit,
     });
 
-    const filteredRows = rows.map((user) => {
-      const userData = formatUserForResponse(user);
+    const filteredRows = boosts
+      .map((boost) => {
+        if (!boost.owner) return null;
+        const userData = formatUserForResponse(boost.owner);
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
       }
@@ -997,8 +1030,13 @@ exports.featuredBoosts = async (req, res) => {
       if (userData.bio_moderation_status !== "approved") {
         userData.bio = null;
       }
+        userData.active_boost_until = boost.ends_at;
+        userData.boost_target_category = boost.target_category;
+        userData.boost_target_area = boost.target_area;
+        userData.boost_id = boost.id;
       return userData;
-    });
+      })
+      .filter(Boolean);
 
     return res.json({ success: true, data: filteredRows });
   } catch (err) {
@@ -1042,12 +1080,16 @@ exports.adminList = async (req, res) => {
     const { count, rows } = await PublicUser.findAndCountAll({
       where,
       attributes: {
-        exclude: ["password", "otp"], // Admin can see phone numbers
+        exclude: ["password", "otp"],
+        include: [
+          [Sequelize.literal(activeBoostUntilSubquery), "active_boost_until"],
+        ],
       },
       order: [
         ["createdAt", "DESC"],
         ["isVerified", "DESC"],
-        ["boost_score", "DESC"],
+        [activeBoostPresenceOrderLiteral, "DESC"],
+        [activeBoostUntilOrderLiteral, "DESC"],
       ],
       limit,
       offset,
@@ -1370,5 +1412,97 @@ exports.deletePhoto = async (req, res) => {
       success: false,
       message: "Failed to delete photo",
     });
+  }
+};
+
+exports.targetedBoostMatches = async (req, res) => {
+  try {
+    const viewer = await PublicUser.findByPk(req.publicUserId);
+
+    if (!viewer) {
+      return res.status(404).json({
+        success: false,
+        message: "Viewer not found",
+      });
+    }
+
+    if (!viewer.category) {
+      return res.status(400).json({
+        success: false,
+        message: "Viewer category is required to match boosts",
+      });
+    }
+
+    const viewerArea = viewer.county;
+    const queryCategory = req.query.category || viewer.category;
+    const queryArea = (req.query.area || viewerArea || "").trim();
+
+    if (!queryArea) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Viewer location missing. Please update your profile with a county to receive targeted boosts.",
+      });
+    }
+
+    const now = new Date();
+
+    const boosts = await ProfileBoost.findAll({
+      where: {
+        status: "active",
+        ends_at: { [Op.gt]: now },
+        target_category: queryCategory,
+        target_area: { [Op.iLike]: `%${queryArea}%` },
+        public_user_id: { [Op.ne]: viewer.id },
+      },
+      include: [
+        {
+          model: PublicUser,
+          as: "owner",
+          attributes: { exclude: ["password", "otp", "phone"] },
+        },
+      ],
+      order: [["ends_at", "ASC"]],
+      limit: Math.min(Number(req.query.limit) || 20, 50),
+    });
+
+    const matches = boosts
+      .map((boost) => {
+        if (!boost.owner) return null;
+        const owner = formatUserForResponse(boost.owner);
+        if (owner.photo_moderation_status !== "approved") {
+          owner.photo = null;
+        }
+        if (owner.photos) {
+          owner.photos = filterApprovedPhotos(owner.photos);
+        }
+        if (owner.bio_moderation_status !== "approved") {
+          owner.bio = null;
+        }
+        return {
+          id: boost.id,
+          starts_at: boost.starts_at,
+          ends_at: boost.ends_at,
+          target_category: boost.target_category,
+          target_area: boost.target_area,
+          owner,
+        };
+      })
+      .filter(Boolean);
+
+    return res.json({
+      success: true,
+      data: {
+        count: matches.length,
+        category: queryCategory,
+        area: queryArea,
+        matches,
+      },
+    });
+  } catch (err) {
+    console.error("targetedBoostMatches error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch targeted boosts" });
   }
 };

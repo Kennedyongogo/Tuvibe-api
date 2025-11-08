@@ -1,13 +1,36 @@
-const { TokenTransaction } = require("../models");
+const { Op } = require("sequelize");
+const { TokenTransaction, PublicUser, ProfileBoost } = require("../models");
 const { addTokens, deductTokens } = require("../services/tokenService");
-const { PublicUser } = require("../models");
+const {
+  BOOST_DURATION_HOURS,
+  BOOST_PRICE_TOKENS,
+  BOOST_PRICE_KSH,
+} = require("../config/pricing");
+
+const ALLOWED_BOOST_CATEGORIES = [
+  "Regular",
+  "Sugar Mummy",
+  "Sponsor",
+  "Ben 10",
+];
 
 exports.getBalance = async (req, res) => {
   try {
-    const { publicUser } = req;
+    const freshUser = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["token_balance"],
+    });
+
+    if (!freshUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const balanceValue = Number(freshUser.token_balance || 0);
+
     return res.json({
       success: true,
-      data: { balance: publicUser.token_balance },
+      data: { balance: balanceValue },
     });
   } catch (err) {
     console.error("getBalance error:", err);
@@ -77,30 +100,92 @@ exports.purchaseTokens = async (req, res) => {
   }
 };
 
-// Simple boost: deduct fixed tokens and bump boost_score for N hours
+// Profile boost purchase: deduct tokens and create a targeted ProfileBoost record
 exports.boostProfile = async (req, res) => {
   try {
-    const { hours = 24, cost = 20 } = req.body; // defaults
+    const { targetCategory, targetArea } = req.body;
+
+    if (!targetCategory || !ALLOWED_BOOST_CATEGORIES.includes(targetCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or missing target category",
+      });
+    }
+
+    if (!targetArea || typeof targetArea !== "string" || !targetArea.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Target area is required",
+      });
+    }
+
     const user = await PublicUser.findByPk(req.publicUserId);
     if (!user)
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
+
+    const now = new Date();
+
+    await ProfileBoost.update(
+      { status: "expired" },
+      {
+        where: {
+          public_user_id: user.id,
+          status: "active",
+          ends_at: { [Op.lte]: now },
+        },
+      }
+    );
+
+    const activeBoost = await ProfileBoost.findOne({
+      where: {
+        public_user_id: user.id,
+        status: "active",
+        ends_at: { [Op.gt]: now },
+      },
+      order: [["ends_at", "DESC"]],
+    });
+
     await deductTokens(
       req.publicUserId,
-      Number(cost),
-      `Profile boost for ${hours}h`
+      BOOST_PRICE_TOKENS,
+      `Profile boost for ${BOOST_DURATION_HOURS}h`
     );
-    const now = new Date();
+
+    const baseline = activeBoost
+      ? new Date(activeBoost.ends_at)
+      : now;
     const until = new Date(
-      Math.max(now.getTime(), new Date(user.is_featured_until || 0).getTime()) +
-        Number(hours) * 3600 * 1000
+      baseline.getTime() + BOOST_DURATION_HOURS * 3600 * 1000
     );
-    const newBoost = (user.boost_score || 0) + 1;
-    await user.update({ is_featured_until: until, boost_score: newBoost });
+
+    if (activeBoost) {
+      await activeBoost.update({ status: "expired" });
+    }
+
+    const boostRecord = await ProfileBoost.create({
+      public_user_id: user.id,
+      target_category: targetCategory,
+      target_area: targetArea.trim(),
+      price_kes: BOOST_PRICE_KSH,
+      starts_at: now,
+      ends_at: until,
+      status: "active",
+    });
+
+    const totalBoosts = await ProfileBoost.count({
+      where: { public_user_id: user.id },
+    });
+
     return res.json({
       success: true,
-      data: { is_featured_until: until, boost_score: newBoost },
+      data: {
+        boost: boostRecord,
+        totalBoosts,
+        costTokens: BOOST_PRICE_TOKENS,
+        costKsh: BOOST_PRICE_KSH,
+      },
     });
   } catch (err) {
     if (err.code === "INSUFFICIENT_TOKENS") {

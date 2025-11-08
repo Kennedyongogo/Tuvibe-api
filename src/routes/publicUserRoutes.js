@@ -45,4 +45,10 @@ router.get("/", optionalPublicAuth, ctrl.list);
 router.get("/users/:id", authenticatePublic, ctrl.getById);
 router.post("/users/:id/view", authenticatePublic, ctrl.trackProfileView);
 
+router.get(
+  "/boosts/targeted",
+  authenticatePublic,
+  ctrl.targetedBoostMatches
+);
+
 module.exports = router;

@@ -10,8 +10,9 @@ const {
   Payment,
   Notification,
   ProfileView,
+  ProfileBoost,
 } = require("../models");
-const { Op } = require("sequelize");
+const { Op, fn, col } = require("sequelize");
 
 // Helper function to get date ranges for filtering
 const getDateRanges = () => {
@@ -282,6 +283,24 @@ exports.getDashboardStats = async (req, res) => {
 
     // ==================== BOOST STATS ====================
     const now = new Date();
+    const boostUserGroups = await ProfileBoost.findAll({
+      attributes: [
+        "public_user_id",
+        [fn("COUNT", col("ProfileBoost.id")), "count"],
+      ],
+      group: ["public_user_id"],
+      raw: true,
+    });
+    const averageBoosts =
+      boostUserGroups.length === 0
+        ? "0.00"
+        : (
+            boostUserGroups.reduce(
+              (sum, row) => sum + Number(row.count || 0),
+              0
+            ) / boostUserGroups.length
+          ).toFixed(2);
+
     const boostStats = {
       // Total boosts purchased (count of boost transactions)
       totalBoostsPurchased: await TokenTransaction.count({
@@ -297,28 +316,20 @@ exports.getDashboardStats = async (req, res) => {
           description: { [Op.like]: "%Profile boost%" },
         },
       }).then((v) => Math.abs(Number(v || 0))),
-      // Active boosts (profiles with is_featured_until > now)
-      activeBoosts: await PublicUser.count({
+      // Active boosts (profiles with an active ProfileBoost record)
+      activeBoosts: await ProfileBoost.count({
         where: {
-          is_featured_until: { [Op.gt]: now },
+          status: "active",
+          ends_at: { [Op.gt]: now },
         },
       }),
-      // Users with boost_score > 0 (have boosted at least once)
-      usersWithBoostHistory: await PublicUser.count({
-        where: {
-          boost_score: { [Op.gt]: 0 },
-        },
+      // Users with at least one boost record
+      usersWithBoostHistory: await ProfileBoost.count({
+        distinct: true,
+        col: "public_user_id",
       }),
-      // Average boost score across all users
-      averageBoostScore: await PublicUser.findAll({
-        attributes: [
-          [
-            require("sequelize").fn("AVG", require("sequelize").col("boost_score")),
-            "avg",
-          ],
-        ],
-        raw: true,
-      }).then((result) => Number(result[0]?.avg || 0).toFixed(2)),
+      // Average boosts purchased per user (among users who have boosted)
+      averageBoostScore: averageBoosts,
       // Boost purchases by time period
       boostsToday: await TokenTransaction.count({
         where: {

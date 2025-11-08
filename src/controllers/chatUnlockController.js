@@ -2,12 +2,31 @@ const { PublicUser, ChatUnlock } = require("../models");
 const { deductTokens } = require("../services/tokenService");
 const { Op } = require("sequelize");
 const { formatUserForResponse } = require("../utils/userProfile");
+const {
+  PREMIUM_CATEGORIES,
+  CHAT_COST_RULES_TOKENS,
+} = require("../config/pricing");
 
-const CATEGORY_COST = {
-  Regular: 5,
-  "Sugar Mummy": 20,
-  Sponsor: 20,
-  "Ben 10": 10,
+const isPremiumCategory = (category) =>
+  PREMIUM_CATEGORIES.includes(category);
+
+const getChatCostTokens = (requesterCategory, targetCategory) => {
+  const requesterPremium = isPremiumCategory(requesterCategory);
+  const targetPremium = isPremiumCategory(targetCategory);
+
+  if (!requesterPremium && !targetPremium) {
+    return CHAT_COST_RULES_TOKENS.normalToNormal;
+  }
+
+  if (!requesterPremium && targetPremium) {
+    return CHAT_COST_RULES_TOKENS.normalToPremium;
+  }
+
+  if (requesterPremium && !targetPremium) {
+    return CHAT_COST_RULES_TOKENS.premiumToNormal;
+  }
+
+  return CHAT_COST_RULES_TOKENS.premiumToPremium;
 };
 
 exports.getChatCost = async (req, res) => {
@@ -44,20 +63,9 @@ exports.getChatCost = async (req, res) => {
       });
     }
 
-    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
-    const isRequesterRegular = requester.category === "Regular";
+    const premiumCategories = PREMIUM_CATEGORIES;
     const isRequesterPremium = premiumCategories.includes(requester.category);
     const isTargetPremium = premiumCategories.includes(target.category);
-
-    // Check if regular user is trying to unlock premium user
-    if (isRequesterRegular && isTargetPremium) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Please upgrade to premium to unlock chat with premium users. Choose a premium category to upgrade.",
-        requiresUpgrade: true,
-      });
-    }
 
     // Check if premium user is trying to unlock another premium user
     // Premium users can only unlock premium users if target is verified (from Premium Lounge)
@@ -75,7 +83,7 @@ exports.getChatCost = async (req, res) => {
       // If target is verified, allow the unlock (they're from Premium Lounge)
     }
 
-    const cost = CATEGORY_COST[target.category] ?? 10;
+    const cost = getChatCostTokens(requester.category, target.category);
     return res.json({ success: true, data: { cost, alreadyUnlocked: false } });
   } catch (err) {
     console.error("getChatCost error:", err);
@@ -130,43 +138,13 @@ exports.unlock = async (req, res) => {
       });
     }
 
-    // Check if regular user is trying to unlock premium user
-    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
-    const isRequesterRegular = requester.category === "Regular";
+    const premiumCategories = PREMIUM_CATEGORIES;
     const isRequesterPremium = premiumCategories.includes(requester.category);
     const isTargetPremium = premiumCategories.includes(target.category);
 
-    if (isRequesterRegular && isTargetPremium) {
-      // Record failed attempt
-      await ChatUnlock.create({
-        public_user_id: req.publicUserId,
-        target_user_id,
-        token_cost: 0,
-        status: "failed",
-      });
-
-      return res.status(403).json({
-        success: false,
-        message:
-          "Please upgrade to premium to unlock chat with premium users. Choose a premium category to upgrade.",
-        requiresUpgrade: true,
-      });
-    }
-
-    // Check if premium user is trying to unlock another premium user
-    // Premium users can only unlock premium users if target is verified (from Premium Lounge)
-    // Unverified premium users in explore cannot be unlocked by premium users
     if (isRequesterPremium && isTargetPremium) {
       // Allow if target is verified (they're from Premium Lounge)
       if (!target.isVerified) {
-        // Record failed attempt
-        await ChatUnlock.create({
-          public_user_id: req.publicUserId,
-          target_user_id,
-          token_cost: 0,
-          status: "failed",
-        });
-
         return res.status(403).json({
           success: false,
           message:
@@ -177,7 +155,7 @@ exports.unlock = async (req, res) => {
       // If target is verified, allow the unlock (they're from Premium Lounge)
     }
 
-    const cost = CATEGORY_COST[target.category] ?? 10;
+    const cost = getChatCostTokens(requester.category, target.category);
     try {
       await deductTokens(
         req.publicUserId,
