@@ -20,7 +20,19 @@ module.exports = (sequelize) => {
       },
       target_area: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
+      },
+      target_lat: {
+        type: DataTypes.DECIMAL(10, 8),
+        allowNull: true,
+      },
+      target_lng: {
+        type: DataTypes.DECIMAL(11, 8),
+        allowNull: true,
+      },
+      target_radius_km: {
+        type: DataTypes.DECIMAL(6, 2),
+        allowNull: true,
       },
       price_kes: {
         type: DataTypes.DECIMAL(10, 2),

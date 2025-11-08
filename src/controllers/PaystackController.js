@@ -20,7 +20,7 @@ const PAYSTACK_TOKENS_PER_UNIT = Number(
 );
 const PAYSTACK_BYPASS =
   process.env.PAYSTACK_BYPASS === "true" ||
-  (process.env.NODE_ENV || "").toLowerCase() === "development";
+  process.env.PAYSTACK_BYPASS === "1";
 
 if (
   !Number.isFinite(PAYSTACK_MINOR_UNIT_FACTOR) ||

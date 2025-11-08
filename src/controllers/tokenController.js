@@ -6,10 +6,7 @@ const {
   BOOST_PRICE_TOKENS,
   BOOST_PRICE_KSH,
 } = require("../config/pricing");
-const {
-  normalizeCountyName,
-  KENYA_COUNTIES,
-} = require("../config/kenyaCounties");
+const { normalizeCountyName } = require("../config/kenyaCounties");
 
 const ALLOWED_BOOST_CATEGORIES = [
   "Regular",
@@ -103,9 +100,31 @@ exports.purchaseTokens = async (req, res) => {
 };
 
 // Profile boost purchase: deduct tokens and create a targeted ProfileBoost record
+const parseCoordinate = (value) => {
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const sanitizeRadius = (value, { min = 1, max = 200, fallback = 10 } = {}) => {
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.max(numeric, min), max);
+};
+
 exports.boostProfile = async (req, res) => {
   try {
-    const { targetCategory, targetArea } = req.body;
+    const {
+      targetCategory,
+      targetArea,
+      targetLatitude,
+      targetLongitude,
+      targetRadiusKm,
+      targetLat,
+      targetLng,
+      targetRadius,
+    } = req.body;
 
     if (!targetCategory || !ALLOWED_BOOST_CATEGORIES.includes(targetCategory)) {
       return res.status(400).json({
@@ -114,14 +133,34 @@ exports.boostProfile = async (req, res) => {
       });
     }
 
-    const normalizedTargetCounty = normalizeCountyName(targetArea);
-    if (!normalizedTargetCounty) {
+    const boostLat =
+      parseCoordinate(targetLatitude) ?? parseCoordinate(targetLat);
+    const boostLng =
+      parseCoordinate(targetLongitude) ?? parseCoordinate(targetLng);
+    const boostRadiusKm = sanitizeRadius(targetRadiusKm ?? targetRadius, {
+      min: 1,
+      max: 200,
+      fallback: 10,
+    });
+
+    if (
+      boostLat === null ||
+      boostLng === null ||
+      boostLat < -90 ||
+      boostLat > 90 ||
+      boostLng < -180 ||
+      boostLng > 180
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Target county must be one of the 47 counties of Kenya",
-        data: { counties: KENYA_COUNTIES },
+        message:
+          "Valid target latitude and longitude are required to geotarget a boost.",
       });
     }
+
+    const normalizedTargetCounty = targetArea
+      ? normalizeCountyName(targetArea) || targetArea?.trim() || null
+      : null;
 
     const user = await PublicUser.findByPk(req.publicUserId);
     if (!user)
@@ -170,6 +209,9 @@ exports.boostProfile = async (req, res) => {
       public_user_id: user.id,
       target_category: targetCategory,
       target_area: normalizedTargetCounty,
+      target_lat: boostLat,
+      target_lng: boostLng,
+      target_radius_km: boostRadiusKm,
       price_kes: BOOST_PRICE_KSH,
       starts_at: now,
       ends_at: until,
@@ -188,6 +230,9 @@ exports.boostProfile = async (req, res) => {
         costTokens: BOOST_PRICE_TOKENS,
         costKsh: BOOST_PRICE_KSH,
         targetCounty: normalizedTargetCounty,
+        targetLatitude: boostLat,
+        targetLongitude: boostLng,
+        targetRadiusKm: boostRadiusKm,
       },
     });
   } catch (err) {

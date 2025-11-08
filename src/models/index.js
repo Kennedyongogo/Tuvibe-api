@@ -51,7 +51,7 @@ const initializeModels = async () => {
     await Notification.sync({ force: false, alter: false });
     await ProfileView.sync({ force: false, alter: false });
     await Report.sync({ force: false, alter: false });
-    await ProfileBoost.sync({ force: false, alter: false });
+    await ProfileBoost.sync({ force: false, alter: true });
 
     console.log("✅ All models synced successfully");
   } catch (error) {

@@ -50,5 +50,6 @@ router.get(
   authenticatePublic,
   ctrl.targetedBoostMatches
 );
+router.get("/boosts/status", authenticatePublic, ctrl.getBoostStatus);
 
 module.exports = router;

@@ -15,10 +15,6 @@ const {
   birthYearProvided,
   formatUserForResponse,
 } = require("../utils/userProfile");
-const {
-  normalizeCountyName,
-  KENYA_COUNTIES,
-} = require("../config/kenyaCounties");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -309,6 +305,51 @@ exports.logout = async (req, res) => {
   } catch (err) {
     console.error("logout error:", err);
     return res.status(500).json({ success: false, message: "Logout failed" });
+  }
+};
+
+exports.getBoostStatus = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const activeBoost = await ProfileBoost.findOne({
+      where: {
+        public_user_id: req.publicUserId,
+        status: "active",
+        ends_at: { [Op.gt]: now },
+      },
+      order: [["ends_at", "DESC"]],
+    });
+
+    if (!activeBoost) {
+      return res.json({
+        success: true,
+        data: {
+          status: "inactive",
+          boost: null,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        status: "active",
+        boost: {
+          id: activeBoost.id,
+          starts_at: activeBoost.starts_at,
+          ends_at: activeBoost.ends_at,
+          target_category: activeBoost.target_category,
+          target_area: activeBoost.target_area,
+          radius_km: activeBoost.target_radius_km,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("getBoostStatus error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch boost status" });
   }
 };
 
@@ -618,6 +659,11 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+};
+
+const parseCoordinate = (value) => {
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : null;
 };
 
 // Public listing with filters and guest gating
@@ -1044,6 +1090,18 @@ exports.featuredBoosts = async (req, res) => {
         userData.active_boost_until = boost.ends_at;
         userData.boost_target_category = boost.target_category;
         userData.boost_target_area = boost.target_area;
+        userData.boost_target_lat =
+          boost.target_lat !== null && boost.target_lat !== undefined
+            ? Number.parseFloat(boost.target_lat)
+            : null;
+        userData.boost_target_lng =
+          boost.target_lng !== null && boost.target_lng !== undefined
+            ? Number.parseFloat(boost.target_lng)
+            : null;
+        userData.boost_target_radius_km =
+          boost.target_radius_km !== null && boost.target_radius_km !== undefined
+            ? Number.parseFloat(boost.target_radius_km)
+            : null;
         userData.boost_id = boost.id;
         return userData;
       })
@@ -1455,28 +1513,33 @@ exports.targetedBoostMatches = async (req, res) => {
       });
     }
 
-    const viewerCounty = normalizeCountyName(viewer.county);
-    if (!viewerCounty) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Viewer county missing or invalid. Please update your profile with a valid Kenyan county to receive targeted boosts.",
-        data: { counties: KENYA_COUNTIES },
-      });
-    }
-
     const queryCategory = req.query.category || viewer.category;
-    const requestedCounty =
-      req.query.area !== undefined && req.query.area !== null
-        ? normalizeCountyName(req.query.area)
-        : viewerCounty;
 
-    if (!requestedCounty) {
+    const requestedLat =
+      parseCoordinate(req.query.lat) ??
+      parseCoordinate(req.query.latitude) ??
+      parseCoordinate(req.body?.lat) ??
+      parseCoordinate(req.body?.latitude) ??
+      parseCoordinate(viewer.latitude);
+    const requestedLng =
+      parseCoordinate(req.query.lng) ??
+      parseCoordinate(req.query.longitude) ??
+      parseCoordinate(req.body?.lng) ??
+      parseCoordinate(req.body?.longitude) ??
+      parseCoordinate(viewer.longitude);
+
+    if (
+      requestedLat === null ||
+      requestedLng === null ||
+      requestedLat < -90 ||
+      requestedLat > 90 ||
+      requestedLng < -180 ||
+      requestedLng > 180
+    ) {
       return res.status(400).json({
         success: false,
         message:
-          "Requested county is invalid. Please choose one of the 47 Kenyan counties.",
-        data: { counties: KENYA_COUNTIES },
+          "Viewer location is required. Provide valid latitude and longitude to see boosts targeting your current area.",
       });
     }
 
@@ -1487,7 +1550,9 @@ exports.targetedBoostMatches = async (req, res) => {
         status: "active",
         ends_at: { [Op.gt]: now },
         target_category: queryCategory,
-        target_area: requestedCounty,
+        target_lat: { [Op.ne]: null },
+        target_lng: { [Op.ne]: null },
+        target_radius_km: { [Op.gt]: 0 },
         public_user_id: { [Op.ne]: viewer.id },
       },
       include: [
@@ -1514,23 +1579,64 @@ exports.targetedBoostMatches = async (req, res) => {
         if (owner.bio_moderation_status !== "approved") {
           owner.bio = null;
         }
+        if (
+          boost.target_lat === null ||
+          boost.target_lng === null ||
+          boost.target_radius_km === null
+        ) {
+          return null;
+        }
+        const targetLat = parseFloat(boost.target_lat);
+        const targetLng = parseFloat(boost.target_lng);
+        const targetRadius =
+          Number.parseFloat(boost.target_radius_km) > 0
+            ? Number.parseFloat(boost.target_radius_km)
+            : null;
+        if (
+          !Number.isFinite(targetLat) ||
+          !Number.isFinite(targetLng) ||
+          !Number.isFinite(targetRadius)
+        ) {
+          return null;
+        }
+
+        const distanceKm = calculateDistance(
+          requestedLat,
+          requestedLng,
+          targetLat,
+          targetLng
+        );
+
+        if (distanceKm > targetRadius) {
+          return null;
+        }
+
         return {
           id: boost.id,
           starts_at: boost.starts_at,
           ends_at: boost.ends_at,
           target_category: boost.target_category,
           target_area: boost.target_area,
+          target_radius_km: targetRadius,
+          distance_km: Number(distanceKm.toFixed(2)),
           owner,
         };
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort((a, b) => {
+        if (a.distance_km === b.distance_km) {
+          return new Date(a.ends_at) - new Date(b.ends_at);
+        }
+        return a.distance_km - b.distance_km;
+      });
 
     return res.json({
       success: true,
       data: {
         count: matches.length,
         category: queryCategory,
-        area: requestedCounty,
+        latitude: requestedLat,
+        longitude: requestedLng,
         matches,
       },
     });
