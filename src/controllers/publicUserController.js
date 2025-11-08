@@ -1008,6 +1008,9 @@ exports.featuredBoosts = async (req, res) => {
       where: {
         status: "active",
         ends_at: { [Op.gt]: now },
+        ...(req.publicUserId
+          ? { public_user_id: { [Op.ne]: req.publicUserId } }
+          : {}),
       },
       include: [
         {
