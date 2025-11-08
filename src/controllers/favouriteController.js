@@ -1,4 +1,5 @@
 const { Favourite, PublicUser } = require("../models");
+const { formatUserForResponse } = require("../utils/userProfile");
 
 exports.list = async (req, res) => {
   try {
@@ -14,6 +15,7 @@ exports.list = async (req, res) => {
             "photo",
             "category",
             "age",
+            "birth_year",
             "gender",
             "bio",
             "county",
@@ -25,7 +27,14 @@ exports.list = async (req, res) => {
       ],
       order: [["createdAt", "DESC"]],
     });
-    return res.json({ success: true, data: rows });
+    const formattedRows = rows.map((row) => {
+      const data = row.toJSON();
+      if (data.favouritedUser) {
+        data.favouritedUser = formatUserForResponse(data.favouritedUser);
+      }
+      return data;
+    });
+    return res.json({ success: true, data: formattedRows });
   } catch (err) {
     console.error("favourites list error:", err);
     return res
@@ -74,6 +83,7 @@ exports.add = async (req, res) => {
             "photo",
             "category",
             "age",
+            "birth_year",
             "gender",
             "bio",
             "county",
@@ -85,7 +95,13 @@ exports.add = async (req, res) => {
       ],
     });
 
-    return res.status(201).json({ success: true, data: favouriteWithUser });
+    const formatted = favouriteWithUser.toJSON();
+    if (formatted.favouritedUser) {
+      formatted.favouritedUser = formatUserForResponse(
+        formatted.favouritedUser
+      );
+    }
+    return res.status(201).json({ success: true, data: formatted });
   } catch (err) {
     console.error("favourites add error:", err);
     return res

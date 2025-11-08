@@ -4,6 +4,12 @@ const { Op, Sequelize } = require("sequelize");
 const config = require("../config/config");
 const { PublicUser, TokenTransaction, ProfileView } = require("../models");
 const { sequelize } = require("../config/database");
+const {
+  computeAgeFromBirthYear,
+  extractBirthYearFromPayload,
+  birthYearProvided,
+  formatUserForResponse,
+} = require("../utils/userProfile");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -24,7 +30,6 @@ exports.register = async (req, res) => {
     const {
       name,
       gender,
-      age,
       phone,
       email,
       password,
@@ -47,12 +52,19 @@ exports.register = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
     const now = new Date();
+    const birthYear = extractBirthYearFromPayload(req.body);
+
+    if (birthYearProvided(req.body) && birthYear === null) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid year of birth or age provided",
+      });
+    }
 
     // Prepare user data
     const userData = {
       name,
       gender,
-      age,
       category: "Regular", // Always set as Regular by default
       phone,
       email,
@@ -81,13 +93,27 @@ exports.register = async (req, res) => {
       userData.photo_moderation_status = "pending";
     }
 
+    if (birthYear !== null) {
+      userData.birth_year = birthYear;
+      const computedAge = computeAgeFromBirthYear(birthYear);
+      if (computedAge !== null) {
+        userData.age = computedAge;
+      }
+    }
+
     const user = await PublicUser.create(userData);
     const token = signPublicJwt(user.id);
+    const formattedUser = formatUserForResponse(user);
+
     return res.status(201).json({
       success: true,
       data: {
         token,
-        user: { ...user.toJSON(), password: undefined, otp: undefined },
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
       },
     });
   } catch (err) {
@@ -127,11 +153,16 @@ exports.login = async (req, res) => {
     });
 
     const token = signPublicJwt(user.id);
+    const formattedUser = formatUserForResponse(user);
     return res.json({
       success: true,
       data: {
         token,
-        user: { ...user.toJSON(), password: undefined, otp: undefined },
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
       },
     });
   } catch (err) {
@@ -192,9 +223,17 @@ exports.verifyOtp = async (req, res) => {
     });
 
     const token = signPublicJwt(user.id);
+    const formattedUser = formatUserForResponse(user);
     return res.json({
       success: true,
-      data: { token, user: { ...user.toJSON(), password: undefined } },
+      data: {
+        token,
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
+      },
     });
   } catch (err) {
     console.error("verifyOtp error:", err);
@@ -209,7 +248,10 @@ exports.getMe = async (req, res) => {
     const user = await PublicUser.findByPk(req.publicUserId, {
       attributes: { exclude: ["password", "otp"] },
     });
-    return res.json({ success: true, data: user });
+    return res.json({
+      success: true,
+      data: formatUserForResponse(user),
+    });
   } catch (err) {
     console.error("getMe error:", err);
     return res
@@ -244,7 +286,6 @@ exports.updateMe = async (req, res) => {
     const allowed = [
       "name",
       "gender",
-      "age",
       "county",
       "bio",
       "photo",
@@ -351,6 +392,19 @@ exports.updateMe = async (req, res) => {
       }
     }
 
+    const requestedBirthYear = extractBirthYearFromPayload(req.body);
+    if (birthYearProvided(req.body)) {
+      if (requestedBirthYear === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid year of birth or age provided",
+        });
+      }
+      updates.birth_year = requestedBirthYear;
+      const computedAge = computeAgeFromBirthYear(requestedBirthYear);
+      updates.age = computedAge !== null ? computedAge : null;
+    }
+
     // Add fields from req.body (works for both JSON and form-data)
     for (const key of allowed) {
       if (
@@ -358,12 +412,7 @@ exports.updateMe = async (req, res) => {
         req.body[key] !== null &&
         req.body[key] !== ""
       ) {
-        if (key === "age") {
-          const ageValue = parseInt(req.body[key]);
-          if (!isNaN(ageValue) && ageValue > 0) {
-            updates[key] = ageValue;
-          }
-        } else if (key === "latitude" || key === "longitude") {
+        if (key === "latitude" || key === "longitude") {
           const coordValue = parseFloat(req.body[key]);
           if (!isNaN(coordValue)) {
             updates[key] = coordValue;
@@ -384,7 +433,10 @@ exports.updateMe = async (req, res) => {
       const user = await PublicUser.findByPk(req.publicUserId, {
         attributes: { exclude: ["password", "otp"] },
       });
-      return res.json({ success: true, data: user });
+      return res.json({
+        success: true,
+        data: formatUserForResponse(user),
+      });
     }
 
     // Ensure photos is properly formatted as JSONB array before saving
@@ -457,7 +509,10 @@ exports.updateMe = async (req, res) => {
       const user = await PublicUser.findByPk(req.publicUserId, {
         attributes: { exclude: ["password", "otp"] },
       });
-      return res.json({ success: true, data: user });
+      return res.json({
+        success: true,
+        data: formatUserForResponse(user),
+      });
     } catch (updateError) {
       console.error("Database update error:", updateError);
       console.error("Update error details:", {
@@ -741,7 +796,7 @@ exports.list = async (req, res) => {
       // Calculate distance for each user and filter by radius
       const usersWithDistance = rows
         .map((user) => {
-          const userData = user.toJSON();
+          const userData = formatUserForResponse(user);
           const lat = parseFloat(userData.latitude);
           const lon = parseFloat(userData.longitude);
 
@@ -763,7 +818,7 @@ exports.list = async (req, res) => {
           // Convert back to Sequelize instance format for consistency
           const userModel = rows.find((r) => r.id === user.id);
           if (userModel) {
-            const userJson = userModel.toJSON();
+            const userJson = formatUserForResponse(userModel);
             userJson.distance = user.distance;
             return userJson;
           }
@@ -804,7 +859,7 @@ exports.list = async (req, res) => {
 
     // Filter out unapproved photos and bios for public listings
     const filteredRows = processedRows.map((user) => {
-      const userData = user.toJSON ? user.toJSON() : user;
+      const userData = formatUserForResponse(user);
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
@@ -881,7 +936,7 @@ exports.featured = async (req, res) => {
 
     // Filter out unapproved photos and bios for featured listings
     const filteredRows = rows.map((user) => {
-      const userData = user.toJSON();
+      const userData = formatUserForResponse(user);
       // Hide photo if not approved
       if (userData.photo_moderation_status !== "approved") {
         userData.photo = null;
@@ -903,6 +958,55 @@ exports.featured = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch featured users" });
+  }
+};
+
+// Featured boosted users ordered by most recent boost window
+exports.featuredBoosts = async (req, res) => {
+  try {
+    const now = new Date();
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+
+    const where = {
+      is_featured_until: { [Op.gt]: now },
+      boost_score: { [Op.gt]: 0 },
+    };
+
+    if (req.publicUserId) {
+      where.id = { [Op.ne]: req.publicUserId };
+    }
+
+    const rows = await PublicUser.findAll({
+      where,
+      attributes: { exclude: ["password", "otp", "phone"] },
+      order: [
+        ["is_featured_until", "DESC"],
+        ["updatedAt", "DESC"],
+      ],
+      limit,
+    });
+
+    const filteredRows = rows.map((user) => {
+      const userData = formatUserForResponse(user);
+      if (userData.photo_moderation_status !== "approved") {
+        userData.photo = null;
+      }
+      if (userData.photos) {
+        userData.photos = filterApprovedPhotos(userData.photos);
+      }
+      if (userData.bio_moderation_status !== "approved") {
+        userData.bio = null;
+      }
+      return userData;
+    });
+
+    return res.json({ success: true, data: filteredRows });
+  } catch (err) {
+    console.error("featuredBoosts error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch boosted featured users",
+    });
   }
 };
 
@@ -1023,7 +1127,7 @@ exports.getById = async (req, res) => {
     }
 
     // Only show photo if approved
-    const safeUser = { ...user.toJSON() };
+    const safeUser = formatUserForResponse(user);
     if (
       safeUser.photo_moderation_status !== "approved" &&
       safeUser.photo_moderation_status !== null

@@ -33,6 +33,11 @@ router.delete("/me/photos/:photoIndex", authenticatePublic, ctrl.deletePhoto);
 router.get("/wallet", authenticatePublic, ctrl.getWallet);
 
 // Browse & Featured (guest-friendly)
+router.get(
+  "/featured/boosts",
+  optionalPublicAuth,
+  ctrl.featuredBoosts
+);
 router.get("/featured", optionalPublicAuth, ctrl.featured);
 router.get("/", optionalPublicAuth, ctrl.list);
 

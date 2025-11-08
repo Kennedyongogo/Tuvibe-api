@@ -1,6 +1,7 @@
 const { PublicUser, ChatUnlock } = require("../models");
 const { deductTokens } = require("../services/tokenService");
 const { Op } = require("sequelize");
+const { formatUserForResponse } = require("../utils/userProfile");
 
 const CATEGORY_COST = {
   Regular: 5,
@@ -235,6 +236,7 @@ exports.list = async (req, res) => {
             "photo",
             "category",
             "age",
+            "birth_year",
             "gender",
             "bio",
             "county",
@@ -247,7 +249,14 @@ exports.list = async (req, res) => {
       ],
       order: [["createdAt", "DESC"]],
     });
-    return res.json({ success: true, data: rows });
+    const formattedRows = rows.map((row) => {
+      const data = row.toJSON();
+      if (data.target) {
+        data.target = formatUserForResponse(data.target);
+      }
+      return data;
+    });
+    return res.json({ success: true, data: formattedRows });
   } catch (err) {
     console.error("chat unlocks list error:", err);
     return res

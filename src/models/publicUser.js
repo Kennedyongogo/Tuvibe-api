@@ -21,6 +21,14 @@ module.exports = (sequelize) => {
         type: DataTypes.INTEGER,
         allowNull: true,
       },
+      birth_year: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        validate: {
+          min: 1900,
+          isInt: true,
+        },
+      },
       county: {
         type: DataTypes.STRING,
         allowNull: true,

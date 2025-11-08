@@ -1,5 +1,6 @@
 const { MarketItem, LookingForPost, PublicUser } = require("../models");
 const { Op, Sequelize } = require("sequelize");
+const { computeAgeFromBirthYear } = require("../utils/userProfile");
 
 /**
  * Data Service - Direct access to models for ML service
@@ -279,11 +280,24 @@ class DataService {
 
       // Filter by age range
       if (ageRange) {
+        const currentYear = new Date().getFullYear();
         if (ageRange.min !== undefined) {
-          where.age = { ...where.age, [Op.gte]: ageRange.min };
+          const maxBirthYear = currentYear - parseInt(ageRange.min, 10);
+          if (!Number.isNaN(maxBirthYear)) {
+            where.birth_year = {
+              ...(where.birth_year || {}),
+              [Op.lte]: maxBirthYear,
+            };
+          }
         }
         if (ageRange.max !== undefined) {
-          where.age = { ...where.age, [Op.lte]: ageRange.max };
+          const minBirthYear = currentYear - parseInt(ageRange.max, 10);
+          if (!Number.isNaN(minBirthYear)) {
+            where.birth_year = {
+              ...(where.birth_year || {}),
+              [Op.gte]: minBirthYear,
+            };
+          }
         }
       }
 
@@ -306,6 +320,7 @@ class DataService {
           "category",
           "gender",
           "age",
+          "birth_year",
           "bio",
           "isVerified",
           "createdAt",
@@ -321,7 +336,8 @@ class DataService {
         photo: user.photo,
         category: user.category,
         gender: user.gender,
-        age: user.age,
+        age: computeAgeFromBirthYear(user.birth_year) ?? user.age ?? null,
+        birth_year: user.birth_year ?? null,
         bio: user.bio,
         isVerified: user.isVerified,
         created_at: user.createdAt,
