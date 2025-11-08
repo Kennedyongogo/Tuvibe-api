@@ -2,7 +2,12 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op, Sequelize } = require("sequelize");
 const config = require("../config/config");
-const { PublicUser, TokenTransaction, ProfileView, ProfileBoost } = require("../models");
+const {
+  PublicUser,
+  TokenTransaction,
+  ProfileView,
+  ProfileBoost,
+} = require("../models");
 const { sequelize } = require("../config/database");
 const {
   computeAgeFromBirthYear,
@@ -10,6 +15,10 @@ const {
   birthYearProvided,
   formatUserForResponse,
 } = require("../utils/userProfile");
+const {
+  normalizeCountyName,
+  KENYA_COUNTIES,
+} = require("../config/kenyaCounties");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -49,21 +58,17 @@ const boostHistoryExistsLiteral = Sequelize.literal(`(
   WHERE pb.public_user_id = "PublicUser"."id"
 ) > 0`);
 
-const activeBoostPresenceOrderLiteral = Sequelize.literal(`CASE WHEN ${activeBoostUntilSubquery} IS NULL THEN 0 ELSE 1 END`);
-const activeBoostUntilOrderLiteral = Sequelize.literal(`COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`);
+const activeBoostPresenceOrderLiteral = Sequelize.literal(
+  `CASE WHEN ${activeBoostUntilSubquery} IS NULL THEN 0 ELSE 1 END`
+);
+const activeBoostUntilOrderLiteral = Sequelize.literal(
+  `COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`
+);
 
 exports.register = async (req, res) => {
   try {
-    const {
-      name,
-      gender,
-      phone,
-      email,
-      password,
-      latitude,
-      longitude,
-      bio,
-    } = req.body;
+    const { name, gender, phone, email, password, latitude, longitude, bio } =
+      req.body;
     if (!name || !phone || !email || !password) {
       return res
         .status(400)
@@ -1013,7 +1018,10 @@ exports.featuredBoosts = async (req, res) => {
           },
         },
       ],
-      order: [["ends_at", "DESC"], ["updatedAt", "DESC"]],
+      order: [
+        ["ends_at", "DESC"],
+        ["updatedAt", "DESC"],
+      ],
       limit,
     });
 
@@ -1021,20 +1029,20 @@ exports.featuredBoosts = async (req, res) => {
       .map((boost) => {
         if (!boost.owner) return null;
         const userData = formatUserForResponse(boost.owner);
-      if (userData.photo_moderation_status !== "approved") {
-        userData.photo = null;
-      }
-      if (userData.photos) {
-        userData.photos = filterApprovedPhotos(userData.photos);
-      }
-      if (userData.bio_moderation_status !== "approved") {
-        userData.bio = null;
-      }
+        if (userData.photo_moderation_status !== "approved") {
+          userData.photo = null;
+        }
+        if (userData.photos) {
+          userData.photos = filterApprovedPhotos(userData.photos);
+        }
+        if (userData.bio_moderation_status !== "approved") {
+          userData.bio = null;
+        }
         userData.active_boost_until = boost.ends_at;
         userData.boost_target_category = boost.target_category;
         userData.boost_target_area = boost.target_area;
         userData.boost_id = boost.id;
-      return userData;
+        return userData;
       })
       .filter(Boolean);
 
@@ -1368,24 +1376,35 @@ exports.deletePhoto = async (req, res) => {
     // Remove the photo from the array
     const deletedPhoto = photos[photoIndexNum];
     photos.splice(photoIndexNum, 1);
-    
+
     console.log("Photos after deletion:", photos);
     console.log("Photos count after:", photos.length);
 
     // Update user's photos array - ensure it's saved as JSONB array
     try {
       await user.update({ photos: photos }, { returning: true });
-      
+
       // Reload user to verify the update
       await user.reload();
       console.log("User photos after update:", user.photos);
-      console.log("User photos count after update:", Array.isArray(user.photos) ? user.photos.length : "Not an array");
-      
+      console.log(
+        "User photos count after update:",
+        Array.isArray(user.photos) ? user.photos.length : "Not an array"
+      );
+
       // Verify the update worked
       const updatedPhotos = user.photos;
-      if (Array.isArray(updatedPhotos) && updatedPhotos.length !== photos.length) {
+      if (
+        Array.isArray(updatedPhotos) &&
+        updatedPhotos.length !== photos.length
+      ) {
         console.error("WARNING: Photo count mismatch after update!");
-        console.error("Expected count:", photos.length, "Actual count:", updatedPhotos.length);
+        console.error(
+          "Expected count:",
+          photos.length,
+          "Actual count:",
+          updatedPhotos.length
+        );
       }
     } catch (updateError) {
       console.error("Error updating user photos:", updateError);
@@ -1433,15 +1452,28 @@ exports.targetedBoostMatches = async (req, res) => {
       });
     }
 
-    const viewerArea = viewer.county;
-    const queryCategory = req.query.category || viewer.category;
-    const queryArea = (req.query.area || viewerArea || "").trim();
-
-    if (!queryArea) {
+    const viewerCounty = normalizeCountyName(viewer.county);
+    if (!viewerCounty) {
       return res.status(400).json({
         success: false,
         message:
-          "Viewer location missing. Please update your profile with a county to receive targeted boosts.",
+          "Viewer county missing or invalid. Please update your profile with a valid Kenyan county to receive targeted boosts.",
+        data: { counties: KENYA_COUNTIES },
+      });
+    }
+
+    const queryCategory = req.query.category || viewer.category;
+    const requestedCounty =
+      req.query.area !== undefined && req.query.area !== null
+        ? normalizeCountyName(req.query.area)
+        : viewerCounty;
+
+    if (!requestedCounty) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Requested county is invalid. Please choose one of the 47 Kenyan counties.",
+        data: { counties: KENYA_COUNTIES },
       });
     }
 
@@ -1452,7 +1484,7 @@ exports.targetedBoostMatches = async (req, res) => {
         status: "active",
         ends_at: { [Op.gt]: now },
         target_category: queryCategory,
-        target_area: { [Op.iLike]: `%${queryArea}%` },
+        target_area: requestedCounty,
         public_user_id: { [Op.ne]: viewer.id },
       },
       include: [
@@ -1495,7 +1527,7 @@ exports.targetedBoostMatches = async (req, res) => {
       data: {
         count: matches.length,
         category: queryCategory,
-        area: queryArea,
+        area: requestedCounty,
         matches,
       },
     });

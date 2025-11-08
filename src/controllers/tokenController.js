@@ -6,6 +6,10 @@ const {
   BOOST_PRICE_TOKENS,
   BOOST_PRICE_KSH,
 } = require("../config/pricing");
+const {
+  normalizeCountyName,
+  KENYA_COUNTIES,
+} = require("../config/kenyaCounties");
 
 const ALLOWED_BOOST_CATEGORIES = [
   "Regular",
@@ -66,9 +70,7 @@ exports.getTransaction = async (req, res) => {
         .json({ success: false, message: "Transaction not found" });
     // Verify transaction belongs to current user
     if (row.public_user_id !== req.publicUserId)
-      return res
-        .status(403)
-        .json({ success: false, message: "Access denied" });
+      return res.status(403).json({ success: false, message: "Access denied" });
     return res.json({ success: true, data: row });
   } catch (err) {
     console.error("getTransaction error:", err);
@@ -112,10 +114,12 @@ exports.boostProfile = async (req, res) => {
       });
     }
 
-    if (!targetArea || typeof targetArea !== "string" || !targetArea.trim()) {
+    const normalizedTargetCounty = normalizeCountyName(targetArea);
+    if (!normalizedTargetCounty) {
       return res.status(400).json({
         success: false,
-        message: "Target area is required",
+        message: "Target county must be one of the 47 counties of Kenya",
+        data: { counties: KENYA_COUNTIES },
       });
     }
 
@@ -153,9 +157,7 @@ exports.boostProfile = async (req, res) => {
       `Profile boost for ${BOOST_DURATION_HOURS}h`
     );
 
-    const baseline = activeBoost
-      ? new Date(activeBoost.ends_at)
-      : now;
+    const baseline = activeBoost ? new Date(activeBoost.ends_at) : now;
     const until = new Date(
       baseline.getTime() + BOOST_DURATION_HOURS * 3600 * 1000
     );
@@ -167,7 +169,7 @@ exports.boostProfile = async (req, res) => {
     const boostRecord = await ProfileBoost.create({
       public_user_id: user.id,
       target_category: targetCategory,
-      target_area: targetArea.trim(),
+      target_area: normalizedTargetCounty,
       price_kes: BOOST_PRICE_KSH,
       starts_at: now,
       ends_at: until,
@@ -185,6 +187,7 @@ exports.boostProfile = async (req, res) => {
         totalBoosts,
         costTokens: BOOST_PRICE_TOKENS,
         costKsh: BOOST_PRICE_KSH,
+        targetCounty: normalizedTargetCounty,
       },
     });
   } catch (err) {
