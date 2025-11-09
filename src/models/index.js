@@ -13,6 +13,7 @@ const Payment = require("./payment")(sequelize);
 const Notification = require("./notification")(sequelize);
 const ProfileView = require("./profileView")(sequelize);
 const Report = require("./report")(sequelize);
+const ProfileTag = require("./profileTag")(sequelize);
 const ProfileBoost = require("./profileBoost")(sequelize);
 
 const models = {
@@ -28,6 +29,7 @@ const models = {
   Notification,
   ProfileView,
   Report,
+  ProfileTag,
   ProfileBoost,
 };
 
@@ -52,6 +54,7 @@ const initializeModels = async () => {
     await ProfileView.sync({ force: false, alter: false });
     await Report.sync({ force: false, alter: false });
     await ProfileBoost.sync({ force: false, alter: false });
+    await ProfileTag.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -225,6 +228,26 @@ const setupAssociations = () => {
     models.ProfileBoost.belongsTo(models.PublicUser, {
       foreignKey: "public_user_id",
       as: "owner",
+    });
+
+    // PublicUser ↔ ProfileTag (creator)
+    models.PublicUser.hasMany(models.ProfileTag, {
+      foreignKey: "public_user_id",
+      as: "createdProfileTags",
+    });
+    models.ProfileTag.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "tagger",
+    });
+
+    // PublicUser ↔ ProfileTag (tagged user)
+    models.PublicUser.hasMany(models.ProfileTag, {
+      foreignKey: "tagged_user_id",
+      as: "receivedProfileTags",
+    });
+    models.ProfileTag.belongsTo(models.PublicUser, {
+      foreignKey: "tagged_user_id",
+      as: "taggedUser",
     });
 
     console.log("✅ All associations set up successfully");

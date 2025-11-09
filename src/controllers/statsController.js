@@ -3,7 +3,6 @@ const {
   PublicUser,
   TokenTransaction,
   ChatUnlock,
-  PremiumVerification,
   MarketItem,
   LookingForPost,
   Favourite,
@@ -42,9 +41,6 @@ exports.getDashboardStats = async (req, res) => {
         where: { isVerified: true },
       }),
       onlineUsers: await PublicUser.count({ where: { is_online: true } }),
-      pendingVerifications: await PremiumVerification.count({
-        where: { verification_status: "pending" },
-      }),
     };
 
     // User breakdown by category
@@ -186,16 +182,6 @@ exports.getDashboardStats = async (req, res) => {
       }),
       ben10s: await PublicUser.count({
         where: { category: "Ben 10", isVerified: true },
-      }),
-      // Verification requests
-      pendingRequests: await PremiumVerification.count({
-        where: { verification_status: "pending" },
-      }),
-      approvedRequests: await PremiumVerification.count({
-        where: { verification_status: "approved" },
-      }),
-      rejectedRequests: await PremiumVerification.count({
-        where: { verification_status: "rejected" },
       }),
       // Looking For posts
       totalLookingForPosts: await LookingForPost.count(),

@@ -3,6 +3,7 @@ const {
   PublicUser,
   AdminUser,
   Notification,
+  ProfileTag,
   sequelize,
 } = require("../models");
 const { Op } = require("sequelize");
@@ -56,24 +57,63 @@ exports.create = async (req, res) => {
       }
     }
 
-    const report = await Report.create({
-      public_user_id: req.publicUserId,
-      reported_user_id: reported_user_id || null,
-      category,
-      subject,
-      description,
-      priority: priority || "medium",
-      status: "pending",
-    });
+    const transaction = await sequelize.transaction();
+    try {
+      const report = await Report.create(
+        {
+          public_user_id: req.publicUserId,
+          reported_user_id: reported_user_id || null,
+          category,
+          subject,
+          description,
+          priority: priority || "medium",
+          status: "pending",
+        },
+        { transaction }
+      );
 
-    // Create notification for admins (optional - you can implement admin notifications separately)
-    // For now, just return success
+      const taggableCategories = [
+        "inappropriate_content",
+        "harassment",
+        "scam",
+        "fake_profile",
+        "spam",
+        "other",
+      ];
 
-    return res.status(201).json({
-      success: true,
-      message: "Report submitted successfully",
-      data: report,
-    });
+      if (
+        reported_user_id &&
+        taggableCategories.includes(category)
+      ) {
+        const [profileTag, created] = await ProfileTag.findOrCreate({
+          where: {
+            public_user_id: req.publicUserId,
+            tagged_user_id: reported_user_id,
+            category,
+          },
+          defaults: {
+            notes: description,
+          },
+          transaction,
+        });
+
+        if (!created && description && profileTag.notes !== description) {
+          await profileTag.update({ notes: description }, { transaction });
+        }
+      }
+
+      await transaction.commit();
+
+      return res.status(201).json({
+        success: true,
+        message: "Report submitted successfully",
+        data: report,
+      });
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+
   } catch (err) {
     console.error("create report error:", err);
     return res.status(500).json({
