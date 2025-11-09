@@ -390,37 +390,52 @@ exports.getBoostStatus = async (req, res) => {
   try {
     const now = new Date();
 
-    const activeBoost = await ProfileBoost.findOne({
+    const activeBoosts = await ProfileBoost.findAll({
       where: {
         public_user_id: req.publicUserId,
         status: "active",
         ends_at: { [Op.gt]: now },
       },
-      order: [["ends_at", "DESC"]],
+      order: [["ends_at", "ASC"]],
     });
 
-    if (!activeBoost) {
+    if (!activeBoosts || activeBoosts.length === 0) {
       return res.json({
         success: true,
         data: {
           status: "inactive",
           boost: null,
+          boosts: [],
+          activeCount: 0,
         },
       });
     }
+
+    const formattedBoosts = activeBoosts.map((boost) => {
+      const radiusValue =
+        boost.target_radius_km !== null
+          ? Number.parseFloat(boost.target_radius_km)
+          : null;
+      return {
+        id: boost.id,
+        starts_at: boost.starts_at,
+        ends_at: boost.ends_at,
+        target_category: boost.target_category,
+        target_area: boost.target_area,
+        radius_km: radiusValue,
+        target_lat: boost.target_lat,
+        target_lng: boost.target_lng,
+        status: boost.status,
+      };
+    });
 
     return res.json({
       success: true,
       data: {
         status: "active",
-        boost: {
-          id: activeBoost.id,
-          starts_at: activeBoost.starts_at,
-          ends_at: activeBoost.ends_at,
-          target_category: activeBoost.target_category,
-          target_area: activeBoost.target_area,
-          radius_km: activeBoost.target_radius_km,
-        },
+        boost: formattedBoosts[0],
+        boosts: formattedBoosts,
+        activeCount: formattedBoosts.length,
       },
     });
   } catch (err) {

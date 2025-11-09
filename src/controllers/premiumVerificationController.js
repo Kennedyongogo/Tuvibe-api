@@ -76,9 +76,12 @@ exports.upgradeToPremium = async (req, res) => {
       throw tokenError;
     }
 
-    // Update user category and verify
+    // Update user category, set verification, and premium expiry (7 days)
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     user.category = category;
     user.isVerified = true;
+    user.premium_expires_at = expiresAt;
     await user.save();
 
     const updatedUser = await PublicUser.findByPk(req.publicUserId, {
@@ -93,6 +96,7 @@ exports.upgradeToPremium = async (req, res) => {
         cost,
         costKsh: PREMIUM_UPGRADE_PRICE_KSH,
         remainingBalance: updatedUser.token_balance,
+        premiumExpiresAt: expiresAt,
       },
     });
   } catch (err) {

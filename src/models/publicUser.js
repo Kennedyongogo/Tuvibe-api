@@ -121,6 +121,11 @@ module.exports = (sequelize) => {
         allowNull: false,
         comment: "Total number of profile views (with cooldown)",
       },
+      premium_expires_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: "premium_expires_at",
+      },
     },
     {
       tableName: "public_users",
