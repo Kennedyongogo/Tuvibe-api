@@ -2,11 +2,7 @@ const express = require("express");
 const path = require("path");
 const cors = require("cors");
 const fs = require("fs");
-const bcrypt = require("bcryptjs");
-const nodemailer = require("nodemailer");
-
 const { initializeModels, setupAssociations } = require("./models");
-const { AdminUser } = require("./models");
 const { errorHandler } = require("./middleware/errorHandler");
 
 // Import active routes only
@@ -27,6 +23,9 @@ const statsRoutes = require("./routes/statsRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
 const mlRoutes = require("./routes/mlRoutes");
+const {
+  forgotPassword: adminForgotPassword,
+} = require("./controllers/adminUserController");
 
 const app = express();
 
@@ -131,85 +130,7 @@ console.log("✅ /api/ml route registered");
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 
 // Forgot password endpoint
-app.post("/api/auth/forgot", async (req, res) => {
-  try {
-    const { Email } = req.body;
-
-    if (!Email) {
-      return res.status(400).json({
-        success: false,
-        error: "Email is required",
-      });
-    }
-
-    // Find admin by email
-    const admin = await AdminUser.findOne({ where: { email: Email } });
-    if (!admin) {
-      return res.status(404).json({
-        success: false,
-        error: "No account found with this email address",
-      });
-    }
-
-    // Generate a new random password (8 characters)
-    const newPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update admin password
-    await admin.update({ password: hashedPassword });
-
-    // Send email with new password
-    try {
-      // Create transporter (using Gmail SMTP)
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: "ongogokennedy89@gmail.com", // Your Gmail
-          pass: "mnfj zxio cgxw zefv", // Your Gmail App Password
-        },
-      });
-
-      // Email content
-      const mailOptions = {
-        from: "ongogokennedy89@gmail.com", // Your Gmail
-        to: Email,
-        subject: "Password Reset - Mwalimu Hope Foundation Admin Portal",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">Password Reset Request</h2>
-            <p>Hello ${admin.name},</p>
-            <p>Your password has been reset for the Mwalimu Hope Foundation Admin Portal.</p>
-            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
-              <h3 style="color: #666; margin-top: 0;">Your New Login Credentials:</h3>
-              <p><strong>Email:</strong> ${Email}</p>
-              <p><strong>New Password:</strong> <code style="background-color: #e9e9e9; padding: 2px 6px; border-radius: 3px;">${newPassword}</code></p>
-            </div>
-            <p>Please login with these credentials and change your password immediately for security reasons.</p>
-            <p>If you did not request this password reset, please contact the administrator immediately.</p>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-            <p style="color: #666; font-size: 12px;">This is an automated message from Mwalimu Hope Foundation Admin Portal.</p>
-          </div>
-        `,
-      };
-
-      // Send email
-      await transporter.sendMail(mailOptions);
-    } catch (emailError) {
-      // Don't fail the request if email fails, just log it silently
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Password reset email sent",
-    });
-  } catch (error) {
-    console.error("Error in forgot password:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error processing password reset",
-    });
-  }
-});
+app.post("/api/auth/forgot", adminForgotPassword);
 console.log("✅ /api/auth/forgot route registered");
 
 console.log("✅ All API routes registered");

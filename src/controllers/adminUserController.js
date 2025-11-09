@@ -30,8 +30,9 @@ exports.analytics = async (_req, res) => {
 const { AdminUser } = require("../models");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 const config = require("../config/config");
-const { Op } = require("sequelize");
+const { Op, Sequelize } = require("sequelize");
 
 // Create first admin (no auth required if no admins exist)
 const createFirstAdmin = async (req, res) => {
@@ -141,6 +142,85 @@ const createAdmin = async (req, res) => {
       success: false,
       message: "Error creating admin",
       error: error.message,
+    });
+  }
+};
+
+// Forgot password for admin users
+exports.forgotPassword = async (req, res) => {
+  try {
+    const emailFromBody = req.body?.Email || req.body?.email;
+
+    if (!emailFromBody || typeof emailFromBody !== "string") {
+      return res
+        .status(400)
+        .json({ success: false, error: "Email is required" });
+    }
+
+    const normalizedEmail = emailFromBody.trim().toLowerCase();
+
+    const admin = await AdminUser.findOne({
+      where: Sequelize.where(
+        Sequelize.fn("LOWER", Sequelize.col("email")),
+        normalizedEmail
+      ),
+    });
+
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        error: "No account found with this email address",
+      });
+    }
+
+    const newPassword = Math.random().toString(36).slice(-8);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await admin.update({ password: hashedPassword });
+
+    const emailConfig = config.emailService || {};
+    const transporter = nodemailer.createTransport({
+      service: emailConfig.provider || "gmail",
+      auth: {
+        user: emailConfig.user || "tuvibeonline@gmail.com",
+        pass: emailConfig.pass || "eraw tjci pfcs jfii",
+      },
+    });
+
+    try {
+      await transporter.sendMail({
+        from: emailConfig.user || "tuvibeonline@gmail.com",
+        to: normalizedEmail,
+        subject: "TuVibe Admin Password Reset",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">TuVibe Admin Password Reset</h2>
+            <p>Hello ${admin.name || "Admin"},</p>
+            <p>Your TuVibe Admin Portal password has been reset.</p>
+            <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
+              <h3 style="color: #666; margin-top: 0;">Temporary Credentials:</h3>
+              <p><strong>Email:</strong> ${normalizedEmail}</p>
+              <p><strong>New Password:</strong> <code style="background-color: #e9e9e9; padding: 2px 6px; border-radius: 3px;">${newPassword}</code></p>
+            </div>
+            <p>Please log in with these credentials and change your password immediately.</p>
+            <p>If you did not request this reset, contact the TuVibe support team right away.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #666; font-size: 12px;">This is an automated message from the TuVibe Admin Portal.</p>
+          </div>
+        `,
+      });
+    } catch (emailError) {
+      console.error("Admin password reset email error:", emailError);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset email sent",
+    });
+  } catch (error) {
+    console.error("admin forgot password error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Error processing password reset",
     });
   }
 };
@@ -626,6 +706,7 @@ const getDashboardStats = async (req, res) => {
 module.exports = {
   createFirstAdmin,
   createAdmin,
+  forgotPassword: exports.forgotPassword,
   login,
   getAllAdmins,
   getAdminById,

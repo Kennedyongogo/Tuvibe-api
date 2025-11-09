@@ -114,7 +114,7 @@ const generatePDFReport = async (reportData) => {
       doc
         .fontSize(28)
         .fillColor("#2c3e50")
-        .text("Mwalimu Hope Foundation", headerX, headerY);
+        .text("TuVibe", headerX, headerY);
 
       // Tagline (below header, centered)
       doc
@@ -535,7 +535,7 @@ const generateWordReport = async (reportData) => {
                     new Paragraph({
                       children: [
                         new TextRun({
-                          text: "Mwalimu Hope Foundation",
+                          text: "TuVibe",
                           bold: true,
                           size: 28,
                           color: "2c3e50",
@@ -579,7 +579,7 @@ const generateWordReport = async (reportData) => {
           new Paragraph({
             children: [
               new TextRun({
-                text: "Mwalimu Hope Foundation",
+                text: "TuVibe",
                 bold: true,
                 size: 32,
                 color: "2c3e50",
@@ -610,7 +610,7 @@ const generateWordReport = async (reportData) => {
         new Paragraph({
           children: [
             new TextRun({
-              text: "🏛️ Mwalimu Hope Foundation",
+              text: "🏛️ TuVibe",
               bold: true,
               size: 32,
               color: "2c3e50",

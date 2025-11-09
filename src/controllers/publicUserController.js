@@ -232,18 +232,17 @@ exports.forgotPassword = async (req, res) => {
     await publicUser.update({ password: hashedPassword });
 
     const emailConfig = config.emailService || {};
-
     const transporter = nodemailer.createTransport({
       service: emailConfig.provider || "gmail",
       auth: {
-        user: emailConfig.user || "ongogokennedy89@gmail.com",
-        pass: emailConfig.pass || "mnfj zxio cgxw zefv",
+        user: emailConfig.user || "tuvibeonline@gmail.com",
+        pass: emailConfig.pass || "eraw tjci pfcs jfii",
       },
     });
 
     try {
       await transporter.sendMail({
-        from: emailConfig.user || "ongogokennedy89@gmail.com",
+        from: emailConfig.user || "tuvibeonline@gmail.com",
         to: normalizedEmail,
         subject: "TuVibe Password Reset",
         html: `
@@ -702,6 +701,63 @@ exports.updateMe = async (req, res) => {
         error: process.env.NODE_ENV === "development" ? err.message : undefined,
       });
     }
+  }
+};
+
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (
+      !currentPassword ||
+      typeof currentPassword !== "string" ||
+      !newPassword ||
+      typeof newPassword !== "string"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters long",
+      });
+    }
+
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const isCurrentValid = await bcrypt.compare(
+      currentPassword,
+      user.password || ""
+    );
+    if (!isCurrentValid) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await user.update({ password: hashedPassword });
+
+    return res.json({
+      success: true,
+      message: "Password updated successfully",
+    });
+  } catch (err) {
+    console.error("changePassword error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update password",
+    });
   }
 };
 
