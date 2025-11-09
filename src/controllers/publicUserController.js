@@ -1,3 +1,4 @@
+const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op, Sequelize } = require("sequelize");
@@ -196,6 +197,84 @@ exports.login = async (req, res) => {
   } catch (err) {
     console.error("login error:", err);
     return res.status(500).json({ success: false, message: "Login failed" });
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const emailFromBody = req.body?.Email || req.body?.email;
+
+    if (!emailFromBody || typeof emailFromBody !== "string") {
+      return res.status(400).json({
+        success: false,
+        message: "Email address is required",
+      });
+    }
+
+    const normalizedEmail = emailFromBody.trim().toLowerCase();
+
+    const publicUser = await PublicUser.findOne({
+      where: Sequelize.where(
+        Sequelize.fn("LOWER", Sequelize.col("email")),
+        normalizedEmail
+      ),
+    });
+
+    if (!publicUser) {
+      return res.status(404).json({
+        success: false,
+        message: "We couldn't find an account with that email.",
+      });
+    }
+
+    const newPassword = Math.random().toString(36).slice(-10);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await publicUser.update({ password: hashedPassword });
+
+    const emailConfig = config.emailService || {};
+
+    const transporter = nodemailer.createTransport({
+      service: emailConfig.provider || "gmail",
+      auth: {
+        user: emailConfig.user || "ongogokennedy89@gmail.com",
+        pass: emailConfig.pass || "mnfj zxio cgxw zefv",
+      },
+    });
+
+    try {
+      await transporter.sendMail({
+        from: emailConfig.user || "ongogokennedy89@gmail.com",
+        to: normalizedEmail,
+        subject: "TuVibe Password Reset",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">TuVibe Password Reset</h2>
+            <p>Hello ${publicUser.name || "there"},</p>
+            <p>Your password for the TuVibe account associated with <strong>${normalizedEmail}</strong> has been reset.</p>
+            <div style="background-color: #f7f7f7; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0 0 12px 0; color: #555;">Use the temporary password below to sign in, then update it immediately from your profile settings.</p>
+              <p style="font-size: 1.1rem; font-weight: 600; color: #d4af37;">${newPassword}</p>
+            </div>
+            <p>If you did not request this reset, please reply to this email and let us know right away.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;" />
+            <p style="color: #777; font-size: 12px;">TuVibe Support Team</p>
+          </div>
+        `,
+      });
+    } catch (emailError) {
+      console.error("Public user password reset email error:", emailError);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset email sent.",
+    });
+  } catch (error) {
+    console.error("public forgot password error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reset password. Please try again later.",
+    });
   }
 };
 

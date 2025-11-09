@@ -16,6 +16,7 @@ router.post("/register", uploadProfileImage, handleUploadError, ctrl.register);
 router.post("/login", ctrl.login);
 router.post("/request-otp", ctrl.requestOtp);
 router.post("/verify-otp", ctrl.verifyOtp);
+router.post("/forgot-password", ctrl.forgotPassword);
 
 // Profile
 router.get("/me", authenticatePublic, ctrl.getMe);
