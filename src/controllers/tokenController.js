@@ -13,6 +13,7 @@ const ALLOWED_BOOST_CATEGORIES = [
   "Sugar Mummy",
   "Sponsor",
   "Ben 10",
+  "Urban Chics",
 ];
 
 const BASE_BOOST_DURATION_HOURS = Number(BOOST_DURATION_HOURS) || 1;
@@ -180,9 +181,10 @@ exports.boostProfile = async (req, res) => {
       durationHours ?? hours ?? purchaseHours ?? 1,
       10
     );
-    const purchasedBlocks = Number.isFinite(requestedBlocks) && requestedBlocks > 0
-      ? Math.min(requestedBlocks, 24)
-      : 1;
+    const purchasedBlocks =
+      Number.isFinite(requestedBlocks) && requestedBlocks > 0
+        ? Math.min(requestedBlocks, 24)
+        : 1;
     const totalHoursPurchased = purchasedBlocks * BASE_BOOST_DURATION_HOURS;
     const extensionMs = totalHoursPurchased * 3600 * 1000;
 
@@ -292,9 +294,10 @@ exports.extendProfileBoost = async (req, res) => {
       additionalHours ?? hours ?? durationHours ?? 1,
       10
     );
-    const purchasedBlocks = Number.isFinite(requestedBlocks) && requestedBlocks > 0
-      ? Math.min(requestedBlocks, 24)
-      : 1;
+    const purchasedBlocks =
+      Number.isFinite(requestedBlocks) && requestedBlocks > 0
+        ? Math.min(requestedBlocks, 24)
+        : 1;
     const totalHoursPurchased = purchasedBlocks * BASE_BOOST_DURATION_HOURS;
     const extensionMs = totalHoursPurchased * 3600 * 1000;
 
@@ -311,9 +314,12 @@ exports.extendProfileBoost = async (req, res) => {
       boost.target_radius_km !== null
         ? Number.parseFloat(boost.target_radius_km)
         : 10;
-    const updatedRadius = sanitizeRadius(targetRadiusKm ?? targetRadius ?? radiusFallback, {
-      fallback: radiusFallback,
-    });
+    const updatedRadius = sanitizeRadius(
+      targetRadiusKm ?? targetRadius ?? radiusFallback,
+      {
+        fallback: radiusFallback,
+      }
+    );
 
     const currentEndsAt = new Date(boost.ends_at);
     const baseline = currentEndsAt > now ? currentEndsAt : now;

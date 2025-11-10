@@ -15,7 +15,13 @@ const {
   extractBirthYearFromPayload,
   birthYearProvided,
   formatUserForResponse,
+  formatUserForPublicResponse,
+  MIN_PUBLIC_USER_AGE,
+  isAdultFromBirthYear,
+  isAdultFromAge,
+  deriveBirthYearFromAge,
 } = require("../utils/userProfile");
+const { validatePhoneNumber } = require("../utils/phone");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -64,23 +70,65 @@ const activeBoostUntilOrderLiteral = Sequelize.literal(
 
 exports.register = async (req, res) => {
   try {
-    const { name, gender, phone, email, password, latitude, longitude, bio } =
-      req.body;
-    if (!name || !phone || !email || !password) {
+    const {
+      name,
+      username,
+      gender,
+      phone,
+      email,
+      password,
+      latitude,
+      longitude,
+      bio,
+    } = req.body;
+    const normalizedUsername =
+      typeof username === "string" ? username.trim() : "";
+    if (!name || !normalizedUsername || !phone || !email || !password) {
       return res
         .status(400)
         .json({ success: false, message: "Missing required fields" });
     }
+    const {
+      valid: isPhoneValid,
+      normalized: normalizedPhone,
+      message: phoneValidationMessage,
+    } = validatePhoneNumber(phone);
+
+    if (!isPhoneValid) {
+      console.warn("Registration blocked due to invalid phone number:", {
+        email,
+        phone,
+      });
+      return res.status(400).json({
+        success: false,
+        message: phoneValidationMessage,
+      });
+    }
+
     const exists = await PublicUser.findOne({
-      where: { [Op.or]: [{ email }, { phone }] },
+      where: {
+        [Op.or]: [
+          { email },
+          { phone: normalizedPhone },
+          { username: normalizedUsername },
+        ],
+      },
     });
     if (exists)
-      return res
-        .status(409)
-        .json({ success: false, message: "Email or phone already in use" });
+      return res.status(409).json({
+        success: false,
+        message: "Email, phone, or username already in use",
+      });
 
     const hashed = await bcrypt.hash(password, 10);
     const now = new Date();
+    if (!birthYearProvided(req.body)) {
+      return res.status(400).json({
+        success: false,
+        message: "Age confirmation is required to create an account.",
+      });
+    }
+
     const birthYear = extractBirthYearFromPayload(req.body);
 
     if (birthYearProvided(req.body) && birthYear === null) {
@@ -90,12 +138,28 @@ exports.register = async (req, res) => {
       });
     }
 
+    if (birthYear !== null) {
+      const adultCheck = isAdultFromBirthYear(birthYear);
+      if (adultCheck === null || adultCheck === false) {
+        console.warn("Registration blocked for underage user attempt:", {
+          email,
+          phone,
+          birthYear,
+        });
+        return res.status(403).json({
+          success: false,
+          message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to join TuVibe.`,
+        });
+      }
+    }
+
     // Prepare user data
     const userData = {
       name,
+      username: normalizedUsername,
       gender,
       category: "Regular", // Always set as Regular by default
-      phone,
+      phone: normalizedPhone,
       email,
       password: hashed,
       latitude,
@@ -171,15 +235,71 @@ exports.login = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
 
+    let resolvedBirthYear = user.birth_year || null;
+    let adultCheck = null;
+
+    if (resolvedBirthYear !== null && resolvedBirthYear !== undefined) {
+      adultCheck = isAdultFromBirthYear(resolvedBirthYear);
+    }
+
+    if (adultCheck === null && user.age !== undefined && user.age !== null) {
+      adultCheck = isAdultFromAge(user.age);
+      if (
+        adultCheck !== null &&
+        resolvedBirthYear === null &&
+        adultCheck === true
+      ) {
+        const derivedBirthYear = deriveBirthYearFromAge(user.age);
+        if (derivedBirthYear !== null) {
+          resolvedBirthYear = derivedBirthYear;
+        }
+      }
+    }
+
+    if (adultCheck === null) {
+      console.warn("Login blocked due to missing age verification:", {
+        userId: user.id,
+        email: user.email,
+      });
+      return res.status(403).json({
+        success: false,
+        message:
+          "We could not confirm your age. Please contact support to update your profile.",
+      });
+    }
+
+    if (adultCheck === false) {
+      console.warn("Login blocked for underage user attempt:", {
+        userId: user.id,
+        email: user.email,
+        birthYear: resolvedBirthYear,
+        age: user.age,
+      });
+      return res.status(403).json({
+        success: false,
+        message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to access TuVibe.`,
+      });
+    }
+
     // Update login timestamp and clear logout timestamp
     // Clear last_seen_at when user logs in (will be set only on logout)
     const now = new Date();
-    await user.update({
+    const loginUpdates = {
       logged_in_at: now,
       logged_out_at: null,
       is_online: true,
       last_seen_at: null, // Clear last_seen_at on login (only set on logout)
-    });
+    };
+
+    if (resolvedBirthYear !== null && resolvedBirthYear !== user.birth_year) {
+      loginUpdates.birth_year = resolvedBirthYear;
+      const computedAge = computeAgeFromBirthYear(resolvedBirthYear);
+      if (computedAge !== null) {
+        loginUpdates.age = computedAge;
+      }
+    }
+
+    await user.update(loginUpdates);
 
     const token = signPublicJwt(user.id);
     const formattedUser = formatUserForResponse(user);
@@ -545,9 +665,22 @@ exports.updateMe = async (req, res) => {
     }
 
     if (req.body.phone) {
+      const {
+        valid: isPhoneValid,
+        normalized: normalizedPhone,
+        message: phoneValidationMessage,
+      } = validatePhoneNumber(req.body.phone);
+
+      if (!isPhoneValid) {
+        return res.status(400).json({
+          success: false,
+          message: phoneValidationMessage,
+        });
+      }
+
       const existingUser = await PublicUser.findOne({
         where: {
-          phone: req.body.phone,
+          phone: normalizedPhone,
           id: { [Op.ne]: req.publicUserId },
         },
       });
@@ -556,6 +689,35 @@ exports.updateMe = async (req, res) => {
           .status(409)
           .json({ success: false, message: "Phone number already in use" });
       }
+
+      updates.phone = normalizedPhone;
+    }
+
+    if (req.body.username !== undefined) {
+      const nextUsername =
+        typeof req.body.username === "string" ? req.body.username.trim() : "";
+      if (!nextUsername) {
+        return res.status(400).json({
+          success: false,
+          message: "Username cannot be empty",
+        });
+      }
+
+      const existingUsername = await PublicUser.findOne({
+        where: {
+          username: nextUsername,
+          id: { [Op.ne]: req.publicUserId },
+        },
+      });
+
+      if (existingUsername) {
+        return res.status(409).json({
+          success: false,
+          message: "Username already in use",
+        });
+      }
+
+      updates.username = nextUsername;
     }
 
     const requestedBirthYear = extractBirthYearFromPayload(req.body);
@@ -578,6 +740,9 @@ exports.updateMe = async (req, res) => {
         req.body[key] !== null &&
         req.body[key] !== ""
       ) {
+        if (key === "phone") {
+          continue;
+        }
         if (key === "latitude" || key === "longitude") {
           const coordValue = parseFloat(req.body[key]);
           if (!isNaN(coordValue)) {
@@ -831,7 +996,12 @@ exports.list = async (req, res) => {
       radius = 10, // Default radius in kilometers
     } = req.query;
     const where = {};
-    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    const premiumCategories = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
 
     // Location-based search variables
     let userLat = null;
@@ -1011,7 +1181,7 @@ exports.list = async (req, res) => {
       // Calculate distance for each user and filter by radius
       const usersWithDistance = rows
         .map((user) => {
-          const userData = formatUserForResponse(user);
+          const userData = formatUserForPublicResponse(user);
           const lat = parseFloat(userData.latitude);
           const lon = parseFloat(userData.longitude);
 
@@ -1033,7 +1203,7 @@ exports.list = async (req, res) => {
           // Convert back to Sequelize instance format for consistency
           const userModel = rows.find((r) => r.id === user.id);
           if (userModel) {
-            const userJson = formatUserForResponse(userModel);
+            const userJson = formatUserForPublicResponse(userModel);
             userJson.distance = user.distance;
             const activeBoostUntil = userModel.get("active_boost_until");
             if (activeBoostUntil) {
@@ -1078,7 +1248,7 @@ exports.list = async (req, res) => {
 
     // Filter out unapproved photos and bios for public listings
     const filteredRows = processedRows.map((user) => {
-      const userData = formatUserForResponse(user);
+      const userData = formatUserForPublicResponse(user);
       const activeBoostUntil = user.get("active_boost_until");
       if (activeBoostUntil) {
         userData.active_boost_until = activeBoostUntil;
@@ -1132,7 +1302,12 @@ exports.featured = async (req, res) => {
       where.category = { [Op.eq]: "Regular" };
     } else {
       // Registered users: only show Regular users or verified premium users in featured
-      const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+      const premiumCategories = [
+        "Sugar Mummy",
+        "Sponsor",
+        "Ben 10",
+        "Urban Chics",
+      ];
       where[Op.and] = [
         {
           [Op.or]: [
@@ -1165,7 +1340,7 @@ exports.featured = async (req, res) => {
 
     // Filter out unapproved photos and bios for featured listings
     const filteredRows = rows.map((user) => {
-      const userData = formatUserForResponse(user);
+      const userData = formatUserForPublicResponse(user);
       const activeBoostUntil = user.get("active_boost_until");
       if (activeBoostUntil) {
         userData.active_boost_until = activeBoostUntil;
@@ -1227,7 +1402,7 @@ exports.featuredBoosts = async (req, res) => {
     const filteredRows = boosts
       .map((boost) => {
         if (!boost.owner) return null;
-        const userData = formatUserForResponse(boost.owner);
+        const userData = formatUserForPublicResponse(boost.owner);
         if (userData.photo_moderation_status !== "approved") {
           userData.photo = null;
         }
@@ -1249,7 +1424,8 @@ exports.featuredBoosts = async (req, res) => {
             ? Number.parseFloat(boost.target_lng)
             : null;
         userData.boost_target_radius_km =
-          boost.target_radius_km !== null && boost.target_radius_km !== undefined
+          boost.target_radius_km !== null &&
+          boost.target_radius_km !== undefined
             ? Number.parseFloat(boost.target_radius_km)
             : null;
         userData.boost_id = boost.id;
@@ -1388,7 +1564,7 @@ exports.getById = async (req, res) => {
     }
 
     // Only show photo if approved
-    const safeUser = formatUserForResponse(user);
+    const safeUser = formatUserForPublicResponse(user);
     if (
       safeUser.photo_moderation_status !== "approved" &&
       safeUser.photo_moderation_status !== null
@@ -1719,7 +1895,7 @@ exports.targetedBoostMatches = async (req, res) => {
     const matches = boosts
       .map((boost) => {
         if (!boost.owner) return null;
-        const owner = formatUserForResponse(boost.owner);
+        const owner = formatUserForPublicResponse(boost.owner);
         if (owner.photo_moderation_status !== "approved") {
           owner.photo = null;
         }

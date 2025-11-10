@@ -13,6 +13,11 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      username: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        unique: true,
+      },
       gender: {
         type: DataTypes.STRING,
         allowNull: true,
@@ -35,7 +40,13 @@ module.exports = (sequelize) => {
         allowNull: true,
       },
       category: {
-        type: DataTypes.ENUM("Regular", "Sugar Mummy", "Sponsor", "Ben 10"),
+        type: DataTypes.ENUM(
+          "Regular",
+          "Sugar Mummy",
+          "Sponsor",
+          "Ben 10",
+          "Urban Chics"
+        ),
         allowNull: false,
         defaultValue: "Regular",
       },

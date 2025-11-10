@@ -47,7 +47,10 @@ exports.getDashboardStats = async (req, res) => {
     const usersByCategory = await PublicUser.findAll({
       attributes: [
         "category",
-        [require("sequelize").fn("count", require("sequelize").col("id")), "count"],
+        [
+          require("sequelize").fn("count", require("sequelize").col("id")),
+          "count",
+        ],
       ],
       group: ["category"],
       raw: true,
@@ -58,6 +61,7 @@ exports.getDashboardStats = async (req, res) => {
       "Sugar Mummy": 0,
       Sponsor: 0,
       "Ben 10": 0,
+      "Urban Chics": 0,
     };
     usersByCategory.forEach((row) => {
       if (categoryBreakdown.hasOwnProperty(row.category)) {
@@ -99,10 +103,7 @@ exports.getDashboardStats = async (req, res) => {
       attributes: [
         "payment_method",
         [
-          require("sequelize").fn(
-            "sum",
-            require("sequelize").col("amount")
-          ),
+          require("sequelize").fn("sum", require("sequelize").col("amount")),
           "total",
         ],
         [
@@ -152,10 +153,7 @@ exports.getDashboardStats = async (req, res) => {
       attributes: [
         "method",
         [
-          require("sequelize").fn(
-            "sum",
-            require("sequelize").col("amount")
-          ),
+          require("sequelize").fn("sum", require("sequelize").col("amount")),
           "total",
         ],
         [
@@ -182,6 +180,9 @@ exports.getDashboardStats = async (req, res) => {
       }),
       ben10s: await PublicUser.count({
         where: { category: "Ben 10", isVerified: true },
+      }),
+      urbanChics: await PublicUser.count({
+        where: { category: "Urban Chics", isVerified: true },
       }),
       // Looking For posts
       totalLookingForPosts: await LookingForPost.count(),
@@ -377,7 +378,14 @@ exports.getDashboardStats = async (req, res) => {
 
     // ==================== RECENT ACTIVITY ====================
     const recentUsers = await PublicUser.findAll({
-      attributes: ["id", "name", "email", "category", "isVerified", "createdAt"],
+      attributes: [
+        "id",
+        "name",
+        "email",
+        "category",
+        "isVerified",
+        "createdAt",
+      ],
       order: [["createdAt", "DESC"]],
       limit: 5,
     });

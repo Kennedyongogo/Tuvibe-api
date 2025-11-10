@@ -1,6 +1,7 @@
 const { MarketItem, AdminUser } = require("../models");
 const { Sequelize } = require("sequelize");
 const path = require("path");
+const { validatePhoneNumber } = require("../utils/phone");
 
 exports.list = async (req, res) => {
   try {
@@ -77,6 +78,28 @@ exports.create = async (req, res) => {
         .status(400)
         .json({ success: false, message: "title and price required" });
 
+    let normalizedWhatsapp = null;
+    if (
+      whatsapp_number !== undefined &&
+      whatsapp_number !== null &&
+      whatsapp_number !== ""
+    ) {
+      const {
+        valid,
+        normalized,
+        message: phoneValidationMessage,
+      } = validatePhoneNumber(whatsapp_number);
+
+      if (!valid) {
+        return res.status(400).json({
+          success: false,
+          message: phoneValidationMessage,
+        });
+      }
+
+      normalizedWhatsapp = normalized;
+    }
+
     // Handle multiple images upload
     let imagesArray = [];
     if (req.files && req.files.length > 0) {
@@ -88,7 +111,7 @@ exports.create = async (req, res) => {
       description,
       price,
       images: imagesArray,
-      whatsapp_number,
+      whatsapp_number: normalizedWhatsapp,
       is_featured: !!is_featured,
       created_by: req.userId,
       tag: tag || "none",
@@ -136,6 +159,31 @@ exports.update = async (req, res) => {
             }
           } else {
             updates[k] = [];
+          }
+        } else if (k === "whatsapp_number") {
+          const rawWhatsapp = req.body[k];
+
+          if (
+            rawWhatsapp === undefined ||
+            rawWhatsapp === null ||
+            rawWhatsapp === ""
+          ) {
+            updates.whatsapp_number = null;
+          } else {
+            const {
+              valid,
+              normalized,
+              message: phoneValidationMessage,
+            } = validatePhoneNumber(rawWhatsapp);
+
+            if (!valid) {
+              return res.status(400).json({
+                success: false,
+                message: phoneValidationMessage,
+              });
+            }
+
+            updates.whatsapp_number = normalized;
           }
         } else {
           updates[k] = req.body[k];

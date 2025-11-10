@@ -1,4 +1,4 @@
-const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10"];
+const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
 
 const TOKENS_PER_KSH = Number(process.env.TOKENS_PER_KSH || "10");
 
@@ -37,18 +37,12 @@ module.exports = {
   BOOST_DURATION_HOURS,
   BOOST_PRICE_TOKENS: convertKshToTokens(BOOST_PRICE_KSH),
   PREMIUM_UPGRADE_PRICE_KSH,
-  PREMIUM_UPGRADE_PRICE_TOKENS: convertKshToTokens(
-    PREMIUM_UPGRADE_PRICE_KSH
-  ),
+  PREMIUM_UPGRADE_PRICE_TOKENS: convertKshToTokens(PREMIUM_UPGRADE_PRICE_KSH),
   CHAT_COST_RULES_KSH,
   CHAT_COST_RULES_TOKENS: {
     normalToNormal: convertKshToTokens(CHAT_COST_RULES_KSH.normalToNormal),
     normalToPremium: convertKshToTokens(CHAT_COST_RULES_KSH.normalToPremium),
-    premiumToNormal: convertKshToTokens(
-      CHAT_COST_RULES_KSH.premiumToNormal
-    ),
-    premiumToPremium: convertKshToTokens(
-      CHAT_COST_RULES_KSH.premiumToPremium
-    ),
+    premiumToNormal: convertKshToTokens(CHAT_COST_RULES_KSH.premiumToNormal),
+    premiumToPremium: convertKshToTokens(CHAT_COST_RULES_KSH.premiumToPremium),
   },
 };

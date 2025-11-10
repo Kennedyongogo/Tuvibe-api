@@ -1,5 +1,6 @@
 const MIN_BIRTH_YEAR = 1900;
 const MAX_AGE = 120;
+const MIN_PUBLIC_USER_AGE = 18;
 
 const getCurrentYear = () => new Date().getFullYear();
 
@@ -46,6 +47,52 @@ const computeAgeFromBirthYear = (birthYear) => {
   }
 
   return age;
+};
+
+const isAdultFromBirthYear = (birthYear) => {
+  const age = computeAgeFromBirthYear(birthYear);
+  if (age === null) {
+    return null;
+  }
+  return age >= MIN_PUBLIC_USER_AGE;
+};
+
+const isAdultFromAge = (age) => {
+  if (age === undefined || age === null || age === "") {
+    return null;
+  }
+
+  const parsedAge = parseInt(age, 10);
+  if (Number.isNaN(parsedAge) || parsedAge < 0 || parsedAge > MAX_AGE) {
+    return null;
+  }
+
+  return parsedAge >= MIN_PUBLIC_USER_AGE;
+};
+
+const isAdultFromPayload = (payload = {}) => {
+  if (payload === null || typeof payload !== "object") {
+    return null;
+  }
+
+  if (
+    "birth_year" in payload ||
+    "birthYear" in payload ||
+    "yearOfBirth" in payload ||
+    "year_of_birth" in payload
+  ) {
+    const birthYear = extractBirthYearFromPayload(payload);
+    if (birthYear === null) {
+      return null;
+    }
+    return isAdultFromBirthYear(birthYear);
+  }
+
+  if ("age" in payload) {
+    return isAdultFromAge(payload.age);
+  }
+
+  return null;
 };
 
 const extractBirthYearFromPayload = (payload = {}) => {
@@ -111,14 +158,32 @@ const formatUserForResponse = (userInstance) => {
   return raw;
 };
 
+const formatUserForPublicResponse = (userInstance) => {
+  const raw = formatUserForResponse(userInstance);
+  if (!raw) {
+    return raw;
+  }
+
+  const sanitized = { ...raw };
+  if ("name" in sanitized) {
+    delete sanitized.name;
+  }
+
+  return sanitized;
+};
+
 module.exports = {
   MIN_BIRTH_YEAR,
   MAX_AGE,
+  MIN_PUBLIC_USER_AGE,
   normalizeBirthYear,
   deriveBirthYearFromAge,
   computeAgeFromBirthYear,
   extractBirthYearFromPayload,
   birthYearProvided,
   formatUserForResponse,
+  formatUserForPublicResponse,
+  isAdultFromBirthYear,
+  isAdultFromAge,
+  isAdultFromPayload,
 };
-

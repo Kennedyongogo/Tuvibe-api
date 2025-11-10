@@ -1,14 +1,13 @@
 const { PublicUser, ChatUnlock } = require("../models");
 const { deductTokens } = require("../services/tokenService");
 const { Op } = require("sequelize");
-const { formatUserForResponse } = require("../utils/userProfile");
+const { formatUserForPublicResponse } = require("../utils/userProfile");
 const {
   PREMIUM_CATEGORIES,
   CHAT_COST_RULES_TOKENS,
 } = require("../config/pricing");
 
-const isPremiumCategory = (category) =>
-  PREMIUM_CATEGORIES.includes(category);
+const isPremiumCategory = (category) => PREMIUM_CATEGORIES.includes(category);
 
 const getChatCostTokens = (requesterCategory, targetCategory) => {
   const requesterPremium = isPremiumCategory(requesterCategory);
@@ -211,6 +210,7 @@ exports.list = async (req, res) => {
           attributes: [
             "id",
             "name",
+            "username",
             "photo",
             "category",
             "age",
@@ -230,7 +230,7 @@ exports.list = async (req, res) => {
     const formattedRows = rows.map((row) => {
       const data = row.toJSON();
       if (data.target) {
-        data.target = formatUserForResponse(data.target);
+        data.target = formatUserForPublicResponse(data.target);
       }
       return data;
     });

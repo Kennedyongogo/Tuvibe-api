@@ -20,15 +20,15 @@ exports.listMine = async (req, res) => {
 exports.listByUserIds = async (req, res) => {
   try {
     const { user_ids } = req.query;
-    
+
     if (!user_ids) {
       return res.json({ success: true, data: [] });
     }
 
     // Parse user_ids from query string (comma-separated)
-    const userIdArray = Array.isArray(user_ids) 
-      ? user_ids 
-      : user_ids.split(',').filter(id => id.trim());
+    const userIdArray = Array.isArray(user_ids)
+      ? user_ids
+      : user_ids.split(",").filter((id) => id.trim());
 
     if (userIdArray.length === 0) {
       return res.json({ success: true, data: [] });
@@ -37,30 +37,33 @@ exports.listByUserIds = async (req, res) => {
     // Fetch latest post for each user
     const rows = await LookingForPost.findAll({
       where: {
-        public_user_id: { [Op.in]: userIdArray }
+        public_user_id: { [Op.in]: userIdArray },
       },
       include: [
         {
           model: PublicUser,
           as: "author",
           attributes: ["id", "name", "photo", "category"],
-        }
+        },
       ],
       order: [["createdAt", "DESC"]],
     });
 
     // Group by user_id and get latest post for each user
     const postsByUser = {};
-    rows.forEach(post => {
+    rows.forEach((post) => {
       const userId = post.public_user_id;
-      if (!postsByUser[userId] || new Date(post.createdAt) > new Date(postsByUser[userId].createdAt)) {
+      if (
+        !postsByUser[userId] ||
+        new Date(post.createdAt) > new Date(postsByUser[userId].createdAt)
+      ) {
         postsByUser[userId] = post.toJSON();
       }
     });
 
-    return res.json({ 
-      success: true, 
-      data: Object.values(postsByUser) 
+    return res.json({
+      success: true,
+      data: Object.values(postsByUser),
     });
   } catch (err) {
     console.error("posts listByUserIds error:", err);
@@ -77,7 +80,7 @@ exports.create = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "content required" });
-    
+
     // Check if user is verified premium user
     const user = await PublicUser.findByPk(req.publicUserId);
     if (!user) {
@@ -86,16 +89,19 @@ exports.create = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    const premiumCategories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+    const premiumCategories = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
     const isPremiumCategory = premiumCategories.includes(user.category);
-    
+
     if (!isPremiumCategory || !user.isVerified) {
-      return res
-        .status(403)
-        .json({ 
-          success: false, 
-          message: "Only verified premium users can create 'Looking For' posts" 
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Only verified premium users can create 'Looking For' posts",
+      });
     }
 
     const row = await LookingForPost.create({

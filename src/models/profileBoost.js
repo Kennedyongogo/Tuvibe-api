@@ -15,7 +15,13 @@ module.exports = (sequelize) => {
         references: { model: "public_users", key: "id" },
       },
       target_category: {
-        type: DataTypes.ENUM("Regular", "Sugar Mummy", "Sponsor", "Ben 10"),
+        type: DataTypes.ENUM(
+          "Regular",
+          "Sugar Mummy",
+          "Sponsor",
+          "Ben 10",
+          "Urban Chics"
+        ),
         allowNull: false,
       },
       target_area: {

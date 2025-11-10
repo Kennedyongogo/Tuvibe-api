@@ -263,16 +263,30 @@ class MLService {
     }
 
     // Extract category (for users)
-    const categories = ["regular", "sugar mummy", "sponsor", "ben 10"];
+    const categories = [
+      "regular",
+      "sugar mummy",
+      "sponsor",
+      "ben 10",
+      "urban chics",
+    ];
     for (const cat of categories) {
       if (lowerQuestion.includes(cat.toLowerCase())) {
         // Capitalize first letter of each word for proper category matching
-        entities.category =
-          cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
+        entities.category = cat
+          .split(" ")
+          .map((part) =>
+            part.length > 0
+              ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+              : part
+          )
+          .join(" ");
         if (cat === "sugar mummy") {
           entities.category = "Sugar Mummy";
         } else if (cat === "ben 10") {
           entities.category = "Ben 10";
+        } else if (cat === "urban chics") {
+          entities.category = "Urban Chics";
         }
         break;
       }
@@ -615,8 +629,9 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
             const premiumUsers =
               data.allUsers?.filter(
                 (u) =>
-                  ["Sugar Mummy", "Sponsor", "Ben 10"].includes(u.category) &&
-                  u.isVerified
+                  ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"].includes(
+                    u.category
+                  ) && u.isVerified
               ) || [];
 
             if (premiumUsers.length > 0) {
@@ -650,6 +665,7 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
               response += `• Sugar Mummy: Available\n`;
               response += `• Sponsor: Available\n`;
               response += `• Ben 10: Available\n`;
+              response += `• Urban Chics: Available\n`;
             }
           }
           // Specific category query
@@ -668,6 +684,8 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
                 ? "Sponsor"
                 : lowerQ.includes("ben 10")
                 ? "Ben 10"
+                : lowerQ.includes("urban chic")
+                ? "Urban Chics"
                 : "Regular");
 
             const categoryUsers =
@@ -747,12 +765,13 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
             response += `• "Who are in premium lounge?" - See premium users\n`;
             response += `• "What are the user categories?" - See category breakdown\n`;
             response += `• "Show me Sugar Mummy users" - See specific category\n`;
+            response += `• "Show me Urban Chics users" - See specific category\n`;
           }
         } else {
           // No data available, provide general guidance
           response = `I can help you find users on TuVibe. You can:\n`;
           response += `• Browse users in Explore\n`;
-          response += `• Search by category (Regular, Sugar Mummy, Sponsor, Ben 10)\n`;
+          response += `• Search by category (Regular, Sugar Mummy, Sponsor, Ben 10, Urban Chics)\n`;
           response += `• Filter by location, age, and preferences\n`;
           response += `• View premium users in Premium Lounge\n\n`;
           response += `Try asking me:\n`;
@@ -766,7 +785,7 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
         response = `TuVibe uses a token system:\n`;
         response += `• Chat unlock costs vary by user category:\n`;
         response += `  - Regular users: 5 tokens\n`;
-        response += `  - Sugar Mummy/Sponsor: 20 tokens\n`;
+        response += `  - Sugar Mummy/Sponsor/Urban Chics: 20 tokens\n`;
         response += `  - Ben 10: 10 tokens\n`;
         response += `• Premium category upgrades cost tokens\n`;
         response += `• You can purchase tokens in your wallet\n`;
@@ -937,7 +956,7 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
 
       // If premium lounge query, filter for premium categories
       if (entities.premiumLounge) {
-        // Premium lounge includes Sugar Mummy, Sponsor, and Ben 10
+        // Premium lounge includes Sugar Mummy, Sponsor, Ben 10, and Urban Chics
         // We'll filter after fetching to get all premium users
         filters.verified = true; // Premium lounge users must be verified
       }
@@ -953,8 +972,9 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
       if (entities.premiumLounge) {
         users = users.filter(
           (u) =>
-            ["Sugar Mummy", "Sponsor", "Ben 10"].includes(u.category) &&
-            u.isVerified
+            ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"].includes(
+              u.category
+            ) && u.isVerified
         );
       }
 

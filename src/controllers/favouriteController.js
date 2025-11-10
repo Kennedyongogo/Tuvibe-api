@@ -1,5 +1,5 @@
 const { Favourite, PublicUser } = require("../models");
-const { formatUserForResponse } = require("../utils/userProfile");
+const { formatUserForPublicResponse } = require("../utils/userProfile");
 
 exports.list = async (req, res) => {
   try {
@@ -12,6 +12,7 @@ exports.list = async (req, res) => {
           attributes: [
             "id",
             "name",
+            "username",
             "photo",
             "category",
             "age",
@@ -30,7 +31,7 @@ exports.list = async (req, res) => {
     const formattedRows = rows.map((row) => {
       const data = row.toJSON();
       if (data.favouritedUser) {
-        data.favouritedUser = formatUserForResponse(data.favouritedUser);
+        data.favouritedUser = formatUserForPublicResponse(data.favouritedUser);
       }
       return data;
     });
@@ -80,6 +81,7 @@ exports.add = async (req, res) => {
           attributes: [
             "id",
             "name",
+            "username",
             "photo",
             "category",
             "age",
@@ -97,7 +99,7 @@ exports.add = async (req, res) => {
 
     const formatted = favouriteWithUser.toJSON();
     if (formatted.favouritedUser) {
-      formatted.favouritedUser = formatUserForResponse(
+      formatted.favouritedUser = formatUserForPublicResponse(
         formatted.favouritedUser
       );
     }

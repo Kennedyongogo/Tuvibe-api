@@ -6,6 +6,7 @@ const {
   PREMIUM_UPGRADE_PRICE_TOKENS,
   PREMIUM_UPGRADE_PRICE_KSH,
 } = require("../config/pricing");
+const { formatUserForPublicResponse } = require("../utils/userProfile");
 
 const activeBoostUntilSubquery = `(
   SELECT pb.ends_at
@@ -17,8 +18,12 @@ const activeBoostUntilSubquery = `(
   LIMIT 1
 )`;
 
-const activeBoostPresenceOrderLiteral = Sequelize.literal(`CASE WHEN ${activeBoostUntilSubquery} IS NULL THEN 0 ELSE 1 END`);
-const activeBoostUntilOrderLiteral = Sequelize.literal(`COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`);
+const activeBoostPresenceOrderLiteral = Sequelize.literal(
+  `CASE WHEN ${activeBoostUntilSubquery} IS NULL THEN 0 ELSE 1 END`
+);
+const activeBoostUntilOrderLiteral = Sequelize.literal(
+  `COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`
+);
 
 // Upgrade from Regular to Premium category - charges tokens and automatically verifies
 exports.upgradeToPremium = async (req, res) => {
@@ -29,7 +34,7 @@ exports.upgradeToPremium = async (req, res) => {
       return res.status(400).json({
         success: false,
         message:
-          "Invalid category. Must be one of: Sugar Mummy, Sponsor, Ben 10",
+          "Invalid category. Must be one of: Sugar Mummy, Sponsor, Ben 10, Urban Chics",
       });
     }
 
@@ -132,7 +137,7 @@ exports.getUpgradeCosts = async (req, res) => {
 // Premium Lounge listings by category with cost metadata
 exports.loungeByCategory = async (req, res) => {
   try {
-    const { category } = req.params; // "Sugar Mummy" | "Sponsor" | "Ben 10"
+    const { category } = req.params; // "Sugar Mummy" | "Sponsor" | "Ben 10" | "Urban Chics"
     if (!PREMIUM_CATEGORIES.includes(category)) {
       return res
         .status(400)
@@ -196,10 +201,27 @@ exports.loungeByCategory = async (req, res) => {
       "Sugar Mummy": 20,
       Sponsor: 20,
       "Ben 10": 10,
+      "Urban Chics": 20,
     };
+    const sanitizedUsers = rows.map((user) => {
+      const data = formatUserForPublicResponse(user);
+
+      if (data.photo_moderation_status !== "approved") {
+        data.photo = null;
+      }
+
+      if (Array.isArray(data.photos)) {
+        data.photos = data.photos.filter(
+          (photo) => photo?.moderation_status === "approved"
+        );
+      }
+
+      return data;
+    });
+
     return res.json({
       success: true,
-      data: { cost: costMap[category] ?? 10, users: rows },
+      data: { cost: costMap[category] ?? 10, users: sanitizedUsers },
     });
   } catch (err) {
     console.error("loungeByCategory error:", err);

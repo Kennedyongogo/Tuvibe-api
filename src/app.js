@@ -20,6 +20,7 @@ const paystackWebhookRoutes = require("./routes/paystackWebhook");
 const notificationRoutes = require("./routes/notificationRoutes");
 const moderationRoutes = require("./routes/moderationRoutes");
 const statsRoutes = require("./routes/statsRoutes");
+const premiumStatsRoutes = require("./routes/premiumStatsRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
 const mlRoutes = require("./routes/mlRoutes");
@@ -107,6 +108,9 @@ console.log("✅ /api/public route registered");
 // Stats route
 app.use("/api/stats", statsRoutes);
 console.log("✅ /api/stats route registered");
+
+app.use("/api/premium/stats", premiumStatsRoutes);
+console.log("✅ /api/premium/stats route registered");
 
 // TuVibe routes
 app.use("/api/tokens", tokenRoutes);

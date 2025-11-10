@@ -5,7 +5,7 @@ const { Op } = require("sequelize");
 
 const downgradeExpiredPremium = async (user) => {
   if (!user) return user;
-  const categories = ["Sugar Mummy", "Sponsor", "Ben 10"];
+  const categories = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
   if (!categories.includes(user.category)) {
     return user;
   }
@@ -24,7 +24,9 @@ const downgradeExpiredPremium = async (user) => {
       premium_expires_at: null,
     });
     console.log(
-      `[Premium] Downgraded user ${user.id} – premium expired on ${expiresAt.toISOString()}`
+      `[Premium] Downgraded user ${
+        user.id
+      } – premium expired on ${expiresAt.toISOString()}`
     );
     return user;
   } catch (err) {
@@ -61,10 +63,10 @@ exports.authenticatePublic = async (req, res, next) => {
     }
 
     user = await downgradeExpiredPremium(user);
-    
+
     // Middleware: No last_seen_at updates here
     // last_seen_at is only set on logout and cleared on login
-    
+
     req.publicUserId = user.id;
     req.publicUser = user;
     next();
