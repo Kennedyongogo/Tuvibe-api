@@ -25,7 +25,7 @@ module.exports = (sequelize) => {
         allowNull: false,
       },
       target_area: {
-        type: DataTypes.STRING,
+        type: DataTypes.TEXT,
         allowNull: true,
       },
       target_lat: {

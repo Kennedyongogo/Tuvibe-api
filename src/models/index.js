@@ -1,3 +1,4 @@
+const { DataTypes } = require("sequelize");
 const { sequelize } = require("../config/database");
 
 // Import TuVibe models
@@ -33,6 +34,38 @@ const models = {
   ProfileBoost,
 };
 
+const ensureProfileBoostTargetAreaColumn = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable("profile_boosts");
+    const currentType = tableDefinition?.target_area?.type?.toLowerCase?.();
+    if (!currentType || currentType.includes("text")) {
+      return;
+    }
+    console.log("🔧 Updating profile_boosts.target_area column to TEXT...");
+    await queryInterface.changeColumn("profile_boosts", "target_area", {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    });
+    console.log("✅ profile_boosts.target_area column updated to TEXT");
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ profile_boosts table not found yet; skipping target_area adjustment."
+      );
+      return;
+    }
+    console.error(
+      "⚠️ Failed to adjust profile_boosts.target_area column:",
+      error
+    );
+    throw error;
+  }
+};
+
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
@@ -53,6 +86,7 @@ const initializeModels = async () => {
     await Notification.sync({ force: false, alter: false });
     await ProfileView.sync({ force: false, alter: false });
     await Report.sync({ force: false, alter: false });
+    await ensureProfileBoostTargetAreaColumn();
     await ProfileBoost.sync({ force: false, alter: false });
     await ProfileTag.sync({ force: false, alter: false });
 

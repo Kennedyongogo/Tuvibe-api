@@ -1033,10 +1033,7 @@ exports.list = async (req, res) => {
       if (county) where.county = county;
       if (online !== undefined) where.is_online = online === "true";
       if (q) {
-        where[Op.or] = [
-          { name: { [Op.iLike]: `%${q}%` } },
-          { county: { [Op.iLike]: `%${q}%` } },
-        ];
+        where.username = { [Op.iLike]: `%${q}%` };
       }
     } else {
       // Get current user to determine their category
@@ -1116,10 +1113,7 @@ exports.list = async (req, res) => {
       if (q) {
         if (!where[Op.and]) where[Op.and] = [];
         where[Op.and].push({
-          [Op.or]: [
-            { name: { [Op.iLike]: `%${q}%` } },
-            { county: { [Op.iLike]: `%${q}%` } },
-          ],
+          username: { [Op.iLike]: `%${q}%` },
         });
       }
 

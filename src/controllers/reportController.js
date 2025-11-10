@@ -142,7 +142,7 @@ exports.listMine = async (req, res) => {
         {
           model: PublicUser,
           as: "reportedUser",
-          attributes: ["id", "name", "photo"],
+          attributes: ["id", "name", "username", "photo"],
           required: false,
         },
       ],
@@ -184,7 +184,7 @@ exports.getMine = async (req, res) => {
         {
           model: PublicUser,
           as: "reportedUser",
-          attributes: ["id", "name", "photo"],
+          attributes: ["id", "name", "username", "photo"],
           required: false,
         },
         {
@@ -250,13 +250,13 @@ exports.listAll = async (req, res) => {
         {
           model: PublicUser,
           as: "reporter",
-          attributes: ["id", "name", "email", "phone"],
+          attributes: ["id", "name", "username", "email", "phone"],
           required: true,
         },
         {
           model: PublicUser,
           as: "reportedUser",
-          attributes: ["id", "name", "email", "phone"],
+          attributes: ["id", "name", "username", "email", "phone"],
           required: false,
         },
         {

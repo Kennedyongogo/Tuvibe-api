@@ -24,6 +24,7 @@ const mapViewer = (view) => {
   const viewer = view.viewer || null;
   return {
     id: viewer?.id ?? null,
+    username: viewer?.username ?? null,
     name: viewer?.name ?? null,
     category: viewer?.category ?? null,
     isVerified: viewer?.isVerified ?? false,
@@ -37,6 +38,7 @@ const mapUnlocker = (unlock) => {
   const initiator = unlock.initiator || null;
   return {
     id: initiator?.id ?? null,
+    username: initiator?.username ?? null,
     name: initiator?.name ?? null,
     category: initiator?.category ?? null,
     isVerified: initiator?.isVerified ?? false,
@@ -108,7 +110,14 @@ exports.getPremiumOverview = async (req, res) => {
           {
             model: PublicUser,
             as: "viewer",
-            attributes: ["id", "name", "category", "isVerified", "photo"],
+            attributes: [
+              "id",
+              "username",
+              "name",
+              "category",
+              "isVerified",
+              "photo",
+            ],
           },
         ],
         order: [["viewed_at", "DESC"]],
@@ -123,7 +132,14 @@ exports.getPremiumOverview = async (req, res) => {
           {
             model: PublicUser,
             as: "initiator",
-            attributes: ["id", "name", "category", "isVerified", "photo"],
+            attributes: [
+              "id",
+              "username",
+              "name",
+              "category",
+              "isVerified",
+              "photo",
+            ],
           },
         ],
         order: [["createdAt", "DESC"]],
