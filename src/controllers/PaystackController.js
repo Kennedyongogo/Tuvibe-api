@@ -252,8 +252,7 @@ exports.verifyPayment = async (req, res) => {
       );
       return res.status(200).json({
         success: true,
-        message: "Payment already processed",
-        data: data.data,
+        message: "Payment successful",
       });
     }
 
@@ -266,8 +265,7 @@ exports.verifyPayment = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Payment verified successfully",
-      data: data.data,
+      message: "Payment successful",
     });
   } catch (err) {
     console.error("verifyPayment error:", err);
