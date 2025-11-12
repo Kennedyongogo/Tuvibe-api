@@ -23,10 +23,8 @@ const PREMIUM_UPGRADE_PRICE_KSH = Number(
 const CHAT_COST_RULES_KSH = {
   normalToNormal: 2.5,
   normalToPremium: 25,
-  premiumToNormal: 2.5,
-  premiumToPremium: Number(
-    process.env.CHAT_COST_PREMIUM_TO_PREMIUM_KSH || "2.5"
-  ),
+  premiumToNormal: 0,
+  premiumToPremium: 0,
 };
 
 module.exports = {
