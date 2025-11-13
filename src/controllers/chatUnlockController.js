@@ -156,11 +156,13 @@ exports.unlock = async (req, res) => {
 
     const cost = getChatCostTokens(requester.category, target.category);
     try {
-      await deductTokens(
-        req.publicUserId,
-        cost,
-        `WhatsApp unlock: ${target.name}`
-      );
+      if (cost > 0) {
+        await deductTokens(
+          req.publicUserId,
+          cost,
+          `WhatsApp unlock: ${target.name}`
+        );
+      }
       await ChatUnlock.create({
         public_user_id: req.publicUserId,
         target_user_id,
