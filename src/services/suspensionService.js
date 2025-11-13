@@ -6,13 +6,6 @@ const {
   AdminUser,
   sequelize,
 } = require("../models");
-const {
-  emitSuspensionStatus,
-  emitSuspensionRevoked,
-  emitSuspensionMessage,
-  emitSuspensionReadReceipt,
-  emitAdminDashboardUpdate,
-} = require("../sockets/suspensionEmitter");
 
 const ACTIVE_STATUS = "active";
 const REVOKED_STATUS = "revoked";
@@ -66,13 +59,6 @@ exports.suspendAccount = async ({
       });
       await suspension.save({ transaction });
       const plain = formatSuspension(suspension);
-      transaction.afterCommit(() => {
-        emitSuspensionStatus(plain);
-        emitAdminDashboardUpdate({
-          type: "suspension_updated",
-          suspension: plain,
-        });
-      });
       return {
         suspension: plain,
         created: false,
@@ -94,13 +80,6 @@ exports.suspendAccount = async ({
     );
 
     const plain = formatSuspension(suspension);
-    transaction.afterCommit(() => {
-      emitSuspensionStatus(plain);
-      emitAdminDashboardUpdate({
-        type: "suspension_created",
-        suspension: plain,
-      });
-    });
 
     return { suspension: plain, created: true };
   });
@@ -137,13 +116,6 @@ exports.revokeSuspension = async ({ suspensionId, adminUserId }) => {
     });
 
     const plain = formatSuspension(suspension);
-    transaction.afterCommit(() => {
-      emitSuspensionRevoked(plain);
-      emitAdminDashboardUpdate({
-        type: "suspension_revoked",
-        suspension: plain,
-      });
-    });
 
     return plain;
   });
@@ -247,40 +219,6 @@ exports.createSuspensionMessage = async ({
 
     const plainMessage = record.get({ plain: true });
 
-    transaction.afterCommit(async () => {
-      try {
-        const [adminUnread, userUnread] = await Promise.all([
-          exports.countUnreadMessages({
-            suspensionId,
-            viewerRole: "admin",
-          }),
-          exports.countUnreadMessages({
-            suspensionId,
-            viewerRole: "user",
-          }),
-        ]);
-
-        const unreadCounts = { admin: adminUnread, user: userUnread };
-
-        emitSuspensionMessage({
-          suspensionId,
-          message: plainMessage,
-          unreadCounts,
-        });
-
-        emitAdminDashboardUpdate({
-          type: "suspension_message",
-          suspensionId,
-          message: plainMessage,
-          unreadCounts,
-        });
-      } catch (error) {
-        console.error(
-          "[SuspensionService] Failed to emit suspension message:",
-          error
-        );
-      }
-    });
 
     return plainMessage;
   });
@@ -297,29 +235,6 @@ exports.markMessagesAsRead = async ({ suspensionId, viewerRole }) => {
       },
     }
   );
-  try {
-    const [adminUnread, userUnread] = await Promise.all([
-      exports.countUnreadMessages({
-        suspensionId,
-        viewerRole: "admin",
-      }),
-      exports.countUnreadMessages({
-        suspensionId,
-        viewerRole: "user",
-      }),
-    ]);
-
-    emitSuspensionReadReceipt({
-      suspensionId,
-      unreadCounts: { admin: adminUnread, user: userUnread },
-      readerRole: viewerRole,
-    });
-  } catch (error) {
-    console.error(
-      "[SuspensionService] Failed to emit read receipt:",
-      error.message || error
-    );
-  }
 };
 
 exports.countUnreadMessages = async ({ suspensionId, viewerRole }) => {
