@@ -1,6 +1,9 @@
+const http = require("http");
 const { app, appInitialized } = require("./app");
 const config = require("./config/config");
 const { testConnections } = require("./config/database");
+const { initSocketServer } = require("./sockets/socketManager");
+const { registerSuspensionGateway } = require("./sockets/suspensionGateway");
 
 const PORT = process.env.PORT || 4000;
 
@@ -12,7 +15,12 @@ async function createServer() {
     // Wait for app initialization to complete
     await app.appInitialized;
 
-    const server = app.listen(PORT, () => {
+    const server = http.createServer(app);
+
+    const io = initSocketServer(server);
+    registerSuspensionGateway(io);
+
+    server.listen(PORT, () => {
       console.log(`🚀 Worker ${process.pid} listening on port ${PORT}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV}`);
       console.log(

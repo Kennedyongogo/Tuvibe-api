@@ -88,6 +88,16 @@ exports.register = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Missing required fields" });
     }
+    if (!req.file) {
+      console.warn("Registration blocked due to missing profile image:", {
+        email,
+        phone,
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Profile image is required to register.",
+      });
+    }
     const {
       valid: isPhoneValid,
       normalized: normalizedPhone,

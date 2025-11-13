@@ -24,6 +24,7 @@ const premiumStatsRoutes = require("./routes/premiumStatsRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
 const mlRoutes = require("./routes/mlRoutes");
+const suspensionRoutes = require("./routes/suspensionRoutes");
 const {
   forgotPassword: adminForgotPassword,
 } = require("./controllers/adminUserController");
@@ -125,6 +126,7 @@ app.use("/api/paystack", paystackRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/moderation", moderationRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/suspensions", suspensionRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/ml", mlRoutes);
 console.log("✅ TuVibe routes registered");

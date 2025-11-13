@@ -16,6 +16,8 @@ const ProfileView = require("./profileView")(sequelize);
 const Report = require("./report")(sequelize);
 const ProfileTag = require("./profileTag")(sequelize);
 const ProfileBoost = require("./profileBoost")(sequelize);
+const AccountSuspension = require("./accountSuspension")(sequelize);
+const SuspensionMessage = require("./suspensionMessage")(sequelize);
 
 const models = {
   AdminUser,
@@ -32,12 +34,16 @@ const models = {
   Report,
   ProfileTag,
   ProfileBoost,
+  AccountSuspension,
+  SuspensionMessage,
 };
 
 const ensureProfileBoostTargetAreaColumn = async () => {
   const queryInterface = sequelize.getQueryInterface();
   try {
-    const tableDefinition = await queryInterface.describeTable("profile_boosts");
+    const tableDefinition = await queryInterface.describeTable(
+      "profile_boosts"
+    );
     const currentType = tableDefinition?.target_area?.type?.toLowerCase?.();
     if (!currentType || currentType.includes("text")) {
       return;
@@ -89,6 +95,8 @@ const initializeModels = async () => {
     await ensureProfileBoostTargetAreaColumn();
     await ProfileBoost.sync({ force: false, alter: false });
     await ProfileTag.sync({ force: false, alter: false });
+    await AccountSuspension.sync({ force: false, alter: false });
+    await SuspensionMessage.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -282,6 +290,35 @@ const setupAssociations = () => {
     models.ProfileTag.belongsTo(models.PublicUser, {
       foreignKey: "tagged_user_id",
       as: "taggedUser",
+    });
+
+    // AccountSuspension associations
+    models.AccountSuspension.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "publicUser",
+    });
+    models.PublicUser.hasMany(models.AccountSuspension, {
+      foreignKey: "public_user_id",
+      as: "suspensions",
+    });
+    models.AccountSuspension.belongsTo(models.AdminUser, {
+      foreignKey: "admin_user_id",
+      as: "admin",
+    });
+    models.AdminUser.hasMany(models.AccountSuspension, {
+      foreignKey: "admin_user_id",
+      as: "issuedSuspensions",
+    });
+
+    // SuspensionMessage associations
+    models.AccountSuspension.hasMany(models.SuspensionMessage, {
+      foreignKey: "suspension_id",
+      as: "messages",
+      onDelete: "CASCADE",
+    });
+    models.SuspensionMessage.belongsTo(models.AccountSuspension, {
+      foreignKey: "suspension_id",
+      as: "suspension",
     });
 
     console.log("✅ All associations set up successfully");
