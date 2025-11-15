@@ -894,6 +894,76 @@ exports.updateMe = async (req, res) => {
   }
 };
 
+// Upload gallery photos immediately (optimistic flow). Appends photos with pending moderation.
+exports.addPhotos = async (req, res) => {
+  try {
+    if (
+      !req.files ||
+      !req.files.profile_images ||
+      !Array.isArray(req.files.profile_images) ||
+      req.files.profile_images.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No photos provided" });
+    }
+
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Normalize existing photos to array
+    let existingPhotos = [];
+    if (user.photos) {
+      if (Array.isArray(user.photos)) {
+        existingPhotos = user.photos;
+      } else if (typeof user.photos === "string") {
+        try {
+          const parsed = JSON.parse(user.photos);
+          existingPhotos = Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          existingPhotos = [];
+        }
+      }
+    }
+
+    // Map uploaded files to photo objects
+    const uploadedAt = new Date().toISOString();
+    const newPhotos = req.files.profile_images.map((file) => ({
+      path: `profiles/${file.filename}`,
+      moderation_status: "pending",
+      uploaded_at: uploadedAt,
+    }));
+
+    const updatedPhotos = [...existingPhotos, ...newPhotos];
+
+    await user.update({ photos: updatedPhotos });
+    await user.reload();
+
+    // Return updated safe user payload
+    const safeUser = formatUserForResponse(user);
+
+    return res.json({
+      success: true,
+      message: "Photos uploaded and pending approval",
+      data: {
+        user: safeUser,
+        added: newPhotos.length,
+      },
+    });
+  } catch (err) {
+    console.error("addPhotos error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to upload photos",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+};
+
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

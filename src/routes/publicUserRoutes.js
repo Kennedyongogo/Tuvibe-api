@@ -30,6 +30,13 @@ router.put(
 );
 router.put("/me/password", authenticatePublic, ctrl.changePassword);
 router.delete("/me/photos/:photoIndex", authenticatePublic, ctrl.deletePhoto);
+router.post(
+  "/me/photos",
+  authenticatePublic,
+  uploadProfileImages,
+  handleUploadError,
+  ctrl.addPhotos
+);
 
 // Wallet
 router.get("/wallet", authenticatePublic, ctrl.getWallet);
