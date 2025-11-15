@@ -1,6 +1,11 @@
 const { Favourite, PublicUser } = require("../models");
 const { formatUserForPublicResponse } = require("../utils/userProfile");
 
+const filterApprovedPhotos = (photos) => {
+  if (!Array.isArray(photos)) return [];
+  return photos.filter((photo) => photo?.moderation_status === "approved");
+};
+
 exports.list = async (req, res) => {
   try {
     const rows = await Favourite.findAll({
@@ -14,6 +19,8 @@ exports.list = async (req, res) => {
             "name",
             "username",
             "photo",
+            "photo_moderation_status",
+            "photos",
             "category",
             "age",
             "birth_year",
@@ -32,6 +39,14 @@ exports.list = async (req, res) => {
       const data = row.toJSON();
       if (data.favouritedUser) {
         data.favouritedUser = formatUserForPublicResponse(data.favouritedUser);
+        // Hide photo if not approved
+        if (data.favouritedUser.photo_moderation_status !== "approved") {
+          data.favouritedUser.photo = null;
+        }
+        // Filter photos array to only show approved photos
+        if (data.favouritedUser.photos) {
+          data.favouritedUser.photos = filterApprovedPhotos(data.favouritedUser.photos);
+        }
       }
       return data;
     });
@@ -83,6 +98,8 @@ exports.add = async (req, res) => {
             "name",
             "username",
             "photo",
+            "photo_moderation_status",
+            "photos",
             "category",
             "age",
             "birth_year",

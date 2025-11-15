@@ -7,6 +7,11 @@ const {
   CHAT_COST_RULES_TOKENS,
 } = require("../config/pricing");
 
+const filterApprovedPhotos = (photos) => {
+  if (!Array.isArray(photos)) return [];
+  return photos.filter((photo) => photo?.moderation_status === "approved");
+};
+
 const isPremiumCategory = (category) => PREMIUM_CATEGORIES.includes(category);
 
 const getChatCostTokens = (requesterCategory, targetCategory) => {
@@ -214,6 +219,8 @@ exports.list = async (req, res) => {
             "name",
             "username",
             "photo",
+            "photo_moderation_status",
+            "photos",
             "category",
             "age",
             "birth_year",
@@ -233,6 +240,14 @@ exports.list = async (req, res) => {
       const data = row.toJSON();
       if (data.target) {
         data.target = formatUserForPublicResponse(data.target);
+        // Hide photo if not approved
+        if (data.target.photo_moderation_status !== "approved") {
+          data.target.photo = null;
+        }
+        // Filter photos array to only show approved photos
+        if (data.target.photos) {
+          data.target.photos = filterApprovedPhotos(data.target.photos);
+        }
       }
       return data;
     });
