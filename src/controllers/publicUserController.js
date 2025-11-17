@@ -1110,7 +1110,7 @@ exports.list = async (req, res) => {
     if (!req.publicUserId) {
       where.category = category || { [Op.eq]: "Regular" };
       where.isVerified = false;
-      if (county) where.county = county;
+      if (county) where.county = { [Op.iLike]: `%${county}%` };
       if (online !== undefined) where.is_online = online === "true";
       if (q) {
         where.username = { [Op.iLike]: `%${q}%` };
@@ -1132,10 +1132,15 @@ exports.list = async (req, res) => {
         currentUser.category
       );
 
-      // Build base filters
+      // Build base filters (county and online status)
       const baseFilters = {};
-      if (county) baseFilters.county = county;
+      if (county) baseFilters.county = { [Op.iLike]: `%${county}%` };
       if (online !== undefined) baseFilters.is_online = online === "true";
+
+      // Handle search query (username) - add to baseFilters so it works consistently
+      if (q) {
+        baseFilters.username = { [Op.iLike]: `%${q}%` };
+      }
 
       // Handle category filter
       if (category) {
@@ -1144,16 +1149,19 @@ exports.list = async (req, res) => {
           if (isCurrentUserRegular) {
             where.category = category;
             where.isVerified = true; // Regular users can only see verified premium users
+            // Merge baseFilters (county, online, username) into where
             Object.assign(where, baseFilters);
           } else {
             // Premium users: filtering by premium category shows verified users only
             where.category = category;
             where.isVerified = true;
+            // Merge baseFilters (county, online, username) into where
             Object.assign(where, baseFilters);
           }
         } else {
           // Filtering by Regular: show all Regular users
           where.category = category;
+          // Merge baseFilters (county, online, username) into where
           Object.assign(where, baseFilters);
         }
       } else {
@@ -1186,15 +1194,10 @@ exports.list = async (req, res) => {
             },
             ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
           ];
+        } else {
+          // Fallback: if user category is not recognized, just apply baseFilters
+          Object.assign(where, baseFilters);
         }
-      }
-
-      // Handle search query
-      if (q) {
-        if (!where[Op.and]) where[Op.and] = [];
-        where[Op.and].push({
-          username: { [Op.iLike]: `%${q}%` },
-        });
       }
 
       // Handle explicit isVerified filter for registered users
@@ -1891,6 +1894,124 @@ exports.deletePhoto = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to delete photo",
+    });
+  }
+};
+
+// Add photos to user's gallery
+exports.addPhotos = async (req, res) => {
+  try {
+    if (
+      !req.files ||
+      !req.files.profile_images ||
+      !Array.isArray(req.files.profile_images) ||
+      req.files.profile_images.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No photos provided",
+      });
+    }
+
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Ensure existingPhotos is always an array
+    let existingPhotos = [];
+    if (user.photos) {
+      // Handle JSONB data - it might come as array or need parsing
+      if (Array.isArray(user.photos)) {
+        existingPhotos = user.photos;
+      } else if (typeof user.photos === "string") {
+        // If it's a string, try to parse it
+        try {
+          existingPhotos = JSON.parse(user.photos);
+          if (!Array.isArray(existingPhotos)) {
+            existingPhotos = [];
+          }
+        } catch (e) {
+          existingPhotos = [];
+        }
+      } else {
+        existingPhotos = [];
+      }
+    }
+
+    // Create new photo objects with pending moderation status
+    const newPhotos = req.files.profile_images.map((file) => ({
+      path: `profiles/${file.filename}`,
+      moderation_status: "pending",
+      uploaded_at: new Date().toISOString(),
+    }));
+
+    // Add new photos to existing photos array
+    const updatedPhotos = [...existingPhotos, ...newPhotos];
+
+    // Clean and validate photos array - ensure all are plain objects
+    const cleanedPhotos = updatedPhotos
+      .filter((photo) => {
+        // Keep only valid photo objects with a path
+        return (
+          photo &&
+          typeof photo === "object" &&
+          photo.path &&
+          typeof photo.path === "string" &&
+          photo.path.trim() !== ""
+        );
+      })
+      .map((photo) => {
+        // Create a clean plain object for JSONB storage
+        const cleanedPhoto = {
+          path: String(photo.path).trim(),
+          moderation_status: photo.moderation_status || "pending",
+        };
+
+        // Handle uploaded_at - ensure it's always an ISO string
+        if (photo.uploaded_at) {
+          try {
+            const date = new Date(photo.uploaded_at);
+            if (!isNaN(date.getTime())) {
+              cleanedPhoto.uploaded_at = date.toISOString();
+            } else {
+              cleanedPhoto.uploaded_at = new Date().toISOString();
+            }
+          } catch (e) {
+            cleanedPhoto.uploaded_at = new Date().toISOString();
+          }
+        } else {
+          cleanedPhoto.uploaded_at = new Date().toISOString();
+        }
+
+        return cleanedPhoto;
+      });
+
+    // Update user's photos array
+    await user.update({ photos: cleanedPhotos }, { returning: true });
+
+    // Return updated user data
+    const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
+    return res.json({
+      success: true,
+      message: "Photos added successfully",
+      data: {
+        addedPhotos: newPhotos.length,
+        totalPhotos: cleanedPhotos.length,
+        user: formatUserForResponse(updatedUser),
+      },
+    });
+  } catch (err) {
+    console.error("addPhotos error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add photos",
     });
   }
 };
