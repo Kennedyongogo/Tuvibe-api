@@ -29,6 +29,12 @@ const storage = multer.diskStorage({
       uploadPath = path.join(__dirname, "..", "..", "uploads", "documents");
     } else if (file.fieldname === "inquiry_attachment") {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "inquiries");
+    } else if (
+      file.fieldname === "story_media" ||
+      file.fieldname === "story_photo" ||
+      file.fieldname === "story_video"
+    ) {
+      uploadPath = path.join(__dirname, "..", "..", "uploads", "stories");
     } else {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "misc");
     }
@@ -66,6 +72,12 @@ const fileFilter = (req, file, cb) => {
     "image/png": ".png",
     "image/gif": ".gif",
     "image/webp": ".webp",
+    // Videos
+    "video/mp4": ".mp4",
+    "video/mpeg": ".mpeg",
+    "video/quicktime": ".mov",
+    "video/x-msvideo": ".avi",
+    "video/webm": ".webm",
     // Documents
     "application/pdf": ".pdf",
     "application/msword": ".doc",
@@ -100,7 +112,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 50 * 1024 * 1024, // 50MB limit (for videos)
   },
 });
 
@@ -167,6 +179,34 @@ const uploadMarketImages = (req, res, next) => {
     upload.array("market_images", 10)(req, res, next);
   } else {
     // For JSON requests, skip file upload processing
+    next();
+  }
+};
+
+// Middleware for story media (photo or video)
+const uploadStoryMedia = (req, res, next) => {
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.single("story_media")(req, res, next);
+  } else {
+    next();
+  }
+};
+
+// Middleware for multiple story media files
+const uploadStoryMediaMultiple = (req, res, next) => {
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.fields([
+      { name: "story_photo", maxCount: 1 },
+      { name: "story_video", maxCount: 1 },
+      { name: "story_media", maxCount: 10 },
+    ])(req, res, next);
+  } else {
     next();
   }
 };
@@ -266,6 +306,8 @@ module.exports = {
   uploadInquiryAttachment,
   uploadMarketImage,
   uploadMarketImages,
+  uploadStoryMedia,
+  uploadStoryMediaMultiple,
   uploadMixed,
   handleUploadError,
   deleteFile,

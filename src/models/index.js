@@ -18,6 +18,13 @@ const ProfileTag = require("./profileTag")(sequelize);
 const ProfileBoost = require("./profileBoost")(sequelize);
 const AccountSuspension = require("./accountSuspension")(sequelize);
 const SuspensionMessage = require("./suspensionMessage")(sequelize);
+const Story = require("./story")(sequelize);
+const StoryView = require("./storyView")(sequelize);
+const StoryReaction = require("./storyReaction")(sequelize);
+const StoryComment = require("./storyComment")(sequelize);
+const StoryHighlight = require("./storyHighlight")(sequelize);
+const StoryCollection = require("./storyCollection")(sequelize);
+const StoryChallenge = require("./storyChallenge")(sequelize);
 
 const models = {
   AdminUser,
@@ -36,6 +43,13 @@ const models = {
   ProfileBoost,
   AccountSuspension,
   SuspensionMessage,
+  Story,
+  StoryView,
+  StoryReaction,
+  StoryComment,
+  StoryHighlight,
+  StoryCollection,
+  StoryChallenge,
 };
 
 const ensureProfileBoostTargetAreaColumn = async () => {
@@ -97,6 +111,13 @@ const initializeModels = async () => {
     await ProfileTag.sync({ force: false, alter: false });
     await AccountSuspension.sync({ force: false, alter: false });
     await SuspensionMessage.sync({ force: false, alter: false });
+    await StoryHighlight.sync({ force: false, alter: false });
+    await StoryCollection.sync({ force: false, alter: false });
+    await StoryChallenge.sync({ force: false, alter: false });
+    await Story.sync({ force: false, alter: false });
+    await StoryView.sync({ force: false, alter: false });
+    await StoryReaction.sync({ force: false, alter: false });
+    await StoryComment.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -319,6 +340,135 @@ const setupAssociations = () => {
     models.SuspensionMessage.belongsTo(models.AccountSuspension, {
       foreignKey: "suspension_id",
       as: "suspension",
+    });
+
+    // Story associations
+    models.PublicUser.hasMany(models.Story, {
+      foreignKey: "public_user_id",
+      as: "stories",
+    });
+    models.Story.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "user",
+    });
+
+    // StoryView associations
+    models.Story.hasMany(models.StoryView, {
+      foreignKey: "story_id",
+      as: "views",
+      onDelete: "CASCADE",
+    });
+    models.StoryView.belongsTo(models.Story, {
+      foreignKey: "story_id",
+      as: "story",
+    });
+    models.StoryView.belongsTo(models.PublicUser, {
+      foreignKey: "viewer_id",
+      as: "viewer",
+    });
+    models.PublicUser.hasMany(models.StoryView, {
+      foreignKey: "viewer_id",
+      as: "storyViews",
+    });
+
+    // StoryReaction associations
+    models.Story.hasMany(models.StoryReaction, {
+      foreignKey: "story_id",
+      as: "reactions",
+      onDelete: "CASCADE",
+    });
+    models.StoryReaction.belongsTo(models.Story, {
+      foreignKey: "story_id",
+      as: "story",
+    });
+    models.StoryReaction.belongsTo(models.PublicUser, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.PublicUser.hasMany(models.StoryReaction, {
+      foreignKey: "user_id",
+      as: "storyReactions",
+    });
+
+    // StoryComment associations
+    models.Story.hasMany(models.StoryComment, {
+      foreignKey: "story_id",
+      as: "comments",
+      onDelete: "CASCADE",
+    });
+    models.StoryComment.belongsTo(models.Story, {
+      foreignKey: "story_id",
+      as: "story",
+    });
+    models.StoryComment.belongsTo(models.PublicUser, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.PublicUser.hasMany(models.StoryComment, {
+      foreignKey: "user_id",
+      as: "storyComments",
+    });
+    models.StoryComment.hasMany(models.StoryComment, {
+      foreignKey: "parent_comment_id",
+      as: "replies",
+    });
+    models.StoryComment.belongsTo(models.StoryComment, {
+      foreignKey: "parent_comment_id",
+      as: "parentComment",
+    });
+
+    // StoryHighlight associations
+    models.PublicUser.hasMany(models.StoryHighlight, {
+      foreignKey: "public_user_id",
+      as: "storyHighlights",
+    });
+    models.StoryHighlight.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "user",
+    });
+    models.StoryHighlight.hasMany(models.Story, {
+      foreignKey: "highlight_id",
+      as: "stories",
+    });
+    models.Story.belongsTo(models.StoryHighlight, {
+      foreignKey: "highlight_id",
+      as: "highlight",
+    });
+
+    // StoryCollection associations
+    models.StoryCollection.belongsTo(models.PublicUser, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.PublicUser.hasMany(models.StoryCollection, {
+      foreignKey: "created_by",
+      as: "createdCollections",
+    });
+    models.StoryCollection.hasMany(models.Story, {
+      foreignKey: "collection_id",
+      as: "stories",
+    });
+    models.Story.belongsTo(models.StoryCollection, {
+      foreignKey: "collection_id",
+      as: "collection",
+    });
+
+    // StoryChallenge associations
+    models.StoryChallenge.belongsTo(models.PublicUser, {
+      foreignKey: "created_by",
+      as: "creator",
+    });
+    models.PublicUser.hasMany(models.StoryChallenge, {
+      foreignKey: "created_by",
+      as: "createdChallenges",
+    });
+    models.StoryChallenge.hasMany(models.Story, {
+      foreignKey: "challenge_id",
+      as: "stories",
+    });
+    models.Story.belongsTo(models.StoryChallenge, {
+      foreignKey: "challenge_id",
+      as: "challenge",
     });
 
     console.log("✅ All associations set up successfully");

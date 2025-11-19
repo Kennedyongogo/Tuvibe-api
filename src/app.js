@@ -2,8 +2,10 @@ const express = require("express");
 const path = require("path");
 const cors = require("cors");
 const fs = require("fs");
+const cron = require("node-cron");
 const { initializeModels, setupAssociations } = require("./models");
 const { errorHandler } = require("./middleware/errorHandler");
+const storyService = require("./services/storyService");
 
 // Import active routes only
 const adminUserRoutes = require("./routes/adminUserRoutes");
@@ -26,6 +28,7 @@ const chatbotRoutes = require("./routes/chatbotRoutes");
 const mlRoutes = require("./routes/mlRoutes");
 const suspensionRoutes = require("./routes/suspensionRoutes");
 const sseRoutes = require("./routes/sseRoutes");
+const storyRoutes = require("./routes/storyRoutes");
 const {
   forgotPassword: adminForgotPassword,
 } = require("./controllers/adminUserController");
@@ -50,6 +53,7 @@ const documentsUploadPath = path.join(__dirname, "..", "uploads", "documents");
 const projectsUploadPath = path.join(__dirname, "..", "uploads", "projects");
 const inquiriesUploadPath = path.join(__dirname, "..", "uploads", "inquiries");
 const marketUploadPath = path.join(__dirname, "..", "uploads", "market");
+const storiesUploadPath = path.join(__dirname, "..", "uploads", "stories");
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
@@ -84,6 +88,12 @@ console.log(
   fs.existsSync(marketUploadPath)
 );
 console.log(
+  "  - Stories:",
+  storiesUploadPath,
+  "- Exists:",
+  fs.existsSync(storiesUploadPath)
+);
+console.log(
   "  - Misc:",
   miscUploadPath,
   "- Exists:",
@@ -96,6 +106,7 @@ app.use("/uploads/documents", express.static(documentsUploadPath));
 app.use("/uploads/projects", express.static(projectsUploadPath));
 app.use("/uploads/inquiries", express.static(inquiriesUploadPath));
 app.use("/uploads/market", express.static(marketUploadPath));
+app.use("/uploads/stories", express.static(storiesUploadPath));
 app.use("/uploads/misc", express.static(miscUploadPath));
 
 // API routes
@@ -131,10 +142,12 @@ app.use("/api/suspensions", suspensionRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/ml", mlRoutes);
 app.use("/api/sse", sseRoutes.router);
+app.use("/api/stories", storyRoutes);
 console.log("✅ TuVibe routes registered");
 console.log("✅ /api/chatbot route registered");
 console.log("✅ /api/ml route registered");
 console.log("✅ /api/sse route registered");
+console.log("✅ /api/stories route registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 
@@ -177,6 +190,8 @@ const createUploadDirectories = () => {
     path.join(__dirname, "..", "uploads", "documents"),
     path.join(__dirname, "..", "uploads", "projects"),
     path.join(__dirname, "..", "uploads", "inquiries"),
+    path.join(__dirname, "..", "uploads", "market"),
+    path.join(__dirname, "..", "uploads", "stories"),
     path.join(__dirname, "..", "uploads", "misc"),
   ];
 
@@ -193,6 +208,38 @@ const createUploadDirectories = () => {
 const startOfflineTracking = () => {
   // Background job disabled - online status managed by login/logout endpoints only
   console.log("Online status tracking: Manual (login/logout endpoints only)");
+};
+
+// Start story cleanup and maintenance jobs
+const startStoryJobs = () => {
+  // Clean up expired stories every hour
+  cron.schedule("0 * * * *", async () => {
+    try {
+      await storyService.cleanupExpiredStories();
+    } catch (err) {
+      console.error("[Story Jobs] Error cleaning expired stories:", err);
+    }
+  });
+
+  // Publish scheduled stories every 5 minutes
+  cron.schedule("*/5 * * * *", async () => {
+    try {
+      await storyService.publishScheduledStories();
+    } catch (err) {
+      console.error("[Story Jobs] Error publishing scheduled stories:", err);
+    }
+  });
+
+  // Update challenge counts every 30 minutes
+  cron.schedule("*/30 * * * *", async () => {
+    try {
+      await storyService.updateChallengeCounts();
+    } catch (err) {
+      console.error("[Story Jobs] Error updating challenge counts:", err);
+    }
+  });
+
+  console.log("✅ Story maintenance jobs started");
 };
 
 // Initialize models and associations
@@ -214,6 +261,9 @@ const initializeApp = async () => {
 
     // Start background job to track user online status
     startOfflineTracking();
+
+    // Start story maintenance jobs
+    startStoryJobs();
 
     // Chatbot removed
 
