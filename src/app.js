@@ -25,6 +25,7 @@ const reportRoutes = require("./routes/reportRoutes");
 const chatbotRoutes = require("./routes/chatbotRoutes");
 const mlRoutes = require("./routes/mlRoutes");
 const suspensionRoutes = require("./routes/suspensionRoutes");
+const sseRoutes = require("./routes/sseRoutes");
 const {
   forgotPassword: adminForgotPassword,
 } = require("./controllers/adminUserController");
@@ -129,9 +130,11 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/suspensions", suspensionRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/ml", mlRoutes);
+app.use("/api/sse", sseRoutes.router);
 console.log("✅ TuVibe routes registered");
 console.log("✅ /api/chatbot route registered");
 console.log("✅ /api/ml route registered");
+console.log("✅ /api/sse route registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 

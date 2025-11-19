@@ -1,4 +1,5 @@
 const suspensionService = require("../services/suspensionService");
+const { sendEventToUser } = require("../routes/sseRoutes");
 
 const handleError = (res, error) => {
   const status = error.statusCode || 500;
@@ -27,6 +28,16 @@ exports.suspendUser = async (req, res) => {
       metadata,
     });
 
+    // Send SSE event for suspension update
+    try {
+      sendEventToUser(public_user_id, "suspension:update", {
+        public_user_id: public_user_id,
+        ...result.suspension,
+      });
+    } catch (sseError) {
+      console.error("[SSE] Error sending suspension:update event:", sseError);
+    }
+
     return res.status(result.created ? 201 : 200).json({
       success: true,
       created: result.created,
@@ -51,6 +62,20 @@ exports.revokeSuspension = async (req, res) => {
       suspensionId: id,
       adminUserId: req.userId,
     });
+
+    // Send SSE event for suspension revoked
+    if (suspension && suspension.public_user_id) {
+      try {
+        sendEventToUser(suspension.public_user_id, "suspension:revoked", {
+          public_user_id: suspension.public_user_id,
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending suspension:revoked event:",
+          sseError
+        );
+      }
+    }
 
     return res.json({
       success: true,

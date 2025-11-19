@@ -22,6 +22,7 @@ const {
   deriveBirthYearFromAge,
 } = require("../utils/userProfile");
 const { validatePhoneNumber } = require("../utils/phone");
+const { sendEventToUser } = require("../routes/sseRoutes");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -484,6 +485,10 @@ exports.getMe = async (req, res) => {
     const user = await PublicUser.findByPk(req.publicUserId, {
       attributes: { exclude: ["password", "otp"] },
     });
+
+    // Note: getMe doesn't emit SSE events since it's just a read operation
+    // SSE events are emitted when data actually changes (updateMe, token changes, etc.)
+
     return res.json({
       success: true,
       data: formatUserForResponse(user),
@@ -850,6 +855,14 @@ exports.updateMe = async (req, res) => {
       const user = await PublicUser.findByPk(req.publicUserId, {
         attributes: { exclude: ["password", "otp"] },
       });
+
+      // Send SSE event for user update
+      try {
+        sendEventToUser(user.id, "user:update", formatUserForResponse(user));
+      } catch (sseError) {
+        console.error("[SSE] Error sending user:update event:", sseError);
+      }
+
       return res.json({
         success: true,
         data: formatUserForResponse(user),

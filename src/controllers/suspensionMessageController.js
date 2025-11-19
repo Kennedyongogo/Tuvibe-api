@@ -1,4 +1,5 @@
 const suspensionService = require("../services/suspensionService");
+const { sendEventToUser } = require("../routes/sseRoutes");
 
 const getRole = (req) => (req.userType === "admin" ? "admin" : "user");
 const getSenderId = (req, role) =>
@@ -32,6 +33,31 @@ exports.sendMessage = async (req, res) => {
       senderId,
       message,
     });
+
+    // Get suspension to find the user ID
+    const suspension = await suspensionService.getSuspensionById(id, false);
+
+    // Get unread count for the user
+    const unreadCount = await suspensionService.countUnreadMessages({
+      suspensionId: id,
+      viewerRole: "user",
+    });
+
+    // Send SSE event for new message (only to the user, not admin)
+    if (suspension && suspension.public_user_id) {
+      try {
+        sendEventToUser(suspension.public_user_id, "suspension:message:new", {
+          suspensionId: id,
+          message: record,
+          unreadCounts: { user: unreadCount },
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending suspension:message:new event:",
+          sseError
+        );
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -97,6 +123,30 @@ exports.markAsRead = async (req, res) => {
       suspensionId: id,
       viewerRole: role,
     });
+
+    // Get unread count after marking as read
+    const unreadCount = await suspensionService.countUnreadMessages({
+      suspensionId: id,
+      viewerRole: role,
+    });
+
+    // Get suspension to find the user ID
+    const suspension = await suspensionService.getSuspensionById(id, false);
+
+    // Send SSE event for messages read (only to the user)
+    if (suspension && suspension.public_user_id && role === "user") {
+      try {
+        sendEventToUser(suspension.public_user_id, "suspension:messages:read", {
+          suspensionId: id,
+          unreadCounts: { user: unreadCount },
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending suspension:messages:read event:",
+          sseError
+        );
+      }
+    }
 
     return res.json({ success: true });
   } catch (error) {

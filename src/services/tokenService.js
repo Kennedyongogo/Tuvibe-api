@@ -15,6 +15,7 @@ exports.addTokens = async (publicUserId, amount, metadata = {}) => {
     payment_method: metadata.payment_method || "system",
     reference: metadata.reference || null,
   });
+
   return newBalance;
 };
 
@@ -37,5 +38,6 @@ exports.deductTokens = async (publicUserId, amount, description = "") => {
     description,
     payment_method: "system",
   });
+
   return newBalance;
 };

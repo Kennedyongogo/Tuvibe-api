@@ -1,6 +1,8 @@
 const { Op } = require("sequelize");
 const { TokenTransaction, PublicUser, ProfileBoost } = require("../models");
 const { addTokens, deductTokens } = require("../services/tokenService");
+const { sendEventToUser } = require("../routes/sseRoutes");
+const { formatUserForResponse } = require("../utils/userProfile");
 const {
   BOOST_DURATION_HOURS,
   BOOST_PRICE_TOKENS,
@@ -95,6 +97,23 @@ exports.purchaseTokens = async (req, res) => {
       reference: reference || null,
       description: "Token top-up",
     });
+
+    // Send SSE event for user update (token balance changed)
+    try {
+      const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+        attributes: { exclude: ["password", "otp"] },
+      });
+      if (updatedUser) {
+        sendEventToUser(
+          req.publicUserId,
+          "user:update",
+          formatUserForResponse(updatedUser)
+        );
+      }
+    } catch (sseError) {
+      console.error("[SSE] Error sending user:update event:", sseError);
+    }
+
     return res.status(201).json({ success: true, data: { balance } });
   } catch (err) {
     console.error("purchaseTokens error:", err);
@@ -210,6 +229,22 @@ exports.boostProfile = async (req, res) => {
       `Profile boost (${totalHoursPurchased}h)`
     );
 
+    // Send SSE event for user update (token balance changed)
+    try {
+      const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+        attributes: { exclude: ["password", "otp"] },
+      });
+      if (updatedUser) {
+        sendEventToUser(
+          req.publicUserId,
+          "user:update",
+          formatUserForResponse(updatedUser)
+        );
+      }
+    } catch (sseError) {
+      console.error("[SSE] Error sending user:update event:", sseError);
+    }
+
     const boostRecord = await ProfileBoost.create({
       public_user_id: user.id,
       target_category: targetCategory,
@@ -309,6 +344,22 @@ exports.extendProfileBoost = async (req, res) => {
       tokenCost,
       `Extend profile boost (${totalHoursPurchased}h)`
     );
+
+    // Send SSE event for user update (token balance changed)
+    try {
+      const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+        attributes: { exclude: ["password", "otp"] },
+      });
+      if (updatedUser) {
+        sendEventToUser(
+          req.publicUserId,
+          "user:update",
+          formatUserForResponse(updatedUser)
+        );
+      }
+    } catch (sseError) {
+      console.error("[SSE] Error sending user:update event:", sseError);
+    }
 
     const radiusFallback =
       boost.target_radius_km !== null
