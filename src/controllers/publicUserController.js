@@ -766,8 +766,60 @@ exports.updateMe = async (req, res) => {
       });
     }
 
+    // Handle bio separately to allow empty strings (for clearing bio)
+    if (
+      req.body.bio !== undefined &&
+      req.body.bio !== null &&
+      allowed.includes("bio")
+    ) {
+      // Normalize bio strings for comparison (handles Unicode, whitespace, encoding)
+      const normalizeBio = (bioStr) => {
+        if (!bioStr || typeof bioStr !== "string") return "";
+        // Normalize Unicode, collapse whitespace, and trim
+        return bioStr
+          .normalize("NFKC") // Normalize Unicode characters
+          .replace(/\s+/g, " ") // Replace all whitespace with single space
+          .trim();
+      };
+
+      const newBioNormalized = normalizeBio(req.body.bio);
+      const currentBioNormalized = normalizeBio(currentUser.bio);
+
+      // Update bio if:
+      // 1. Normalized content is different, OR
+      // 2. Raw strings are different (handles encoding edge cases in production)
+      const shouldUpdate =
+        newBioNormalized !== currentBioNormalized ||
+        String(req.body.bio || "") !== String(currentUser.bio || "");
+
+      if (shouldUpdate) {
+        // Always store the trimmed version of the new bio (or null if empty)
+        updates.bio =
+          typeof req.body.bio === "string" && req.body.bio.trim() !== ""
+            ? req.body.bio.trim()
+            : null;
+        updates.bio_moderation_status = "pending";
+
+        // Log for debugging production issues
+        if (process.env.NODE_ENV === "production") {
+          console.log("[Bio Update]", {
+            userId: req.publicUserId,
+            normalizedMatch: newBioNormalized === currentBioNormalized,
+            rawMatch:
+              String(req.body.bio || "") === String(currentUser.bio || ""),
+            shouldUpdate: true,
+          });
+        }
+      }
+    }
+
     // Add fields from req.body (works for both JSON and form-data)
     for (const key of allowed) {
+      // Skip bio as it's handled above
+      if (key === "bio") {
+        continue;
+      }
+
       if (
         req.body[key] !== undefined &&
         req.body[key] !== null &&
@@ -780,19 +832,6 @@ exports.updateMe = async (req, res) => {
           const coordValue = parseFloat(req.body[key]);
           if (!isNaN(coordValue)) {
             updates[key] = coordValue;
-          }
-        } else if (key === "bio") {
-          // Only set moderation status to pending if bio content has actually changed
-          const newBio = req.body[key].trim();
-          const currentBio = currentUser.bio ? currentUser.bio.trim() : "";
-
-          if (newBio !== currentBio) {
-            // Bio content has changed, set to pending
-            updates[key] = newBio;
-            updates.bio_moderation_status = "pending";
-          } else {
-            // Bio content hasn't changed, don't update bio or its moderation status
-            // Skip adding bio to updates
           }
         } else {
           updates[key] = req.body[key];

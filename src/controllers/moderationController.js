@@ -1,5 +1,7 @@
 const { PublicUser, Notification } = require("../models");
 const { Op } = require("sequelize");
+const { sendEventToUser } = require("../routes/sseRoutes");
+const { formatUserForResponse } = require("../utils/userProfile");
 
 // Get pending moderation items (photos and bios)
 exports.getPending = async (req, res) => {
@@ -95,6 +97,11 @@ exports.approvePhoto = async (req, res) => {
       photo_moderation_status: "approved",
     });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -109,12 +116,26 @@ exports.approvePhoto = async (req, res) => {
       // Don't fail the request if notification fails
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for photo approval:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Photo approved successfully",
       data: {
-        id: user.id,
-        photo: user.photo,
+        id: updatedUser.id,
+        photo: updatedUser.photo,
         photo_moderation_status: "approved",
       },
     });
@@ -143,6 +164,11 @@ exports.rejectPhoto = async (req, res) => {
       photo_moderation_status: "rejected",
     });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -157,11 +183,25 @@ exports.rejectPhoto = async (req, res) => {
       console.error("Failed to create notification:", notifErr);
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for photo rejection:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Photo rejected successfully",
       data: {
-        id: user.id,
+        id: updatedUser.id,
         photo_moderation_status: "rejected",
       },
     });
@@ -195,6 +235,11 @@ exports.approveBio = async (req, res) => {
       bio_moderation_status: "approved",
     });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -207,12 +252,26 @@ exports.approveBio = async (req, res) => {
       console.error("Failed to create notification:", notifErr);
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for bio approval:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Bio approved successfully",
       data: {
-        id: user.id,
-        bio: user.bio,
+        id: updatedUser.id,
+        bio: updatedUser.bio,
         bio_moderation_status: "approved",
       },
     });
@@ -241,6 +300,11 @@ exports.rejectBio = async (req, res) => {
       bio_moderation_status: "rejected",
     });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -255,11 +319,25 @@ exports.rejectBio = async (req, res) => {
       console.error("Failed to create notification:", notifErr);
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for bio rejection:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Bio rejected successfully",
       data: {
-        id: user.id,
+        id: updatedUser.id,
         bio_moderation_status: "rejected",
       },
     });
@@ -293,6 +371,14 @@ exports.bulkApprovePhotos = async (req, res) => {
       }
     );
 
+    // Reload updated users to get latest data for SSE events
+    const updatedUsers = await PublicUser.findAll({
+      where: {
+        id: { [Op.in]: userIds },
+      },
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notifications for all users
     try {
       const notifications = userIds.map((userId) => ({
@@ -305,6 +391,18 @@ exports.bulkApprovePhotos = async (req, res) => {
       await Notification.bulkCreate(notifications);
     } catch (notifErr) {
       console.error("Failed to create notifications:", notifErr);
+    }
+
+    // Send SSE events to notify users' frontends of the update
+    try {
+      updatedUsers.forEach((user) => {
+        sendEventToUser(user.id, "user:update", formatUserForResponse(user));
+      });
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update events for bulk photo approval:",
+        sseErr
+      );
     }
 
     return res.json({
@@ -342,6 +440,14 @@ exports.bulkApproveBios = async (req, res) => {
       }
     );
 
+    // Reload updated users to get latest data for SSE events
+    const updatedUsers = await PublicUser.findAll({
+      where: {
+        id: { [Op.in]: userIds },
+      },
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notifications for all users
     try {
       const notifications = userIds.map((userId) => ({
@@ -353,6 +459,18 @@ exports.bulkApproveBios = async (req, res) => {
       await Notification.bulkCreate(notifications);
     } catch (notifErr) {
       console.error("Failed to create notifications:", notifErr);
+    }
+
+    // Send SSE events to notify users' frontends of the update
+    try {
+      updatedUsers.forEach((user) => {
+        sendEventToUser(user.id, "user:update", formatUserForResponse(user));
+      });
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update events for bulk bio approval:",
+        sseErr
+      );
     }
 
     return res.json({
@@ -403,6 +521,11 @@ exports.approveGalleryPhoto = async (req, res) => {
 
     await user.update({ photos: updatedPhotos });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -416,12 +539,26 @@ exports.approveGalleryPhoto = async (req, res) => {
       console.error("Failed to create notification:", notifErr);
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for gallery photo approval:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Gallery photo approved successfully",
       data: {
-        id: user.id,
-        photos: updatedPhotos,
+        id: updatedUser.id,
+        photos: updatedUser.photos,
       },
     });
   } catch (err) {
@@ -467,6 +604,11 @@ exports.rejectGalleryPhoto = async (req, res) => {
 
     await user.update({ photos: updatedPhotos });
 
+    // Reload user to get latest data
+    const updatedUser = await PublicUser.findByPk(userId, {
+      attributes: { exclude: ["password", "otp"] },
+    });
+
     // Create notification for user
     try {
       await Notification.create({
@@ -481,12 +623,26 @@ exports.rejectGalleryPhoto = async (req, res) => {
       console.error("Failed to create notification:", notifErr);
     }
 
+    // Send SSE event to notify user's frontend of the update
+    try {
+      sendEventToUser(
+        userId,
+        "user:update",
+        formatUserForResponse(updatedUser)
+      );
+    } catch (sseErr) {
+      console.error(
+        "[SSE] Error sending user:update event for gallery photo rejection:",
+        sseErr
+      );
+    }
+
     return res.json({
       success: true,
       message: "Gallery photo rejected successfully",
       data: {
-        id: user.id,
-        photos: updatedPhotos,
+        id: updatedUser.id,
+        photos: updatedUser.photos,
       },
     });
   } catch (err) {
