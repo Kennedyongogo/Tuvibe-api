@@ -37,16 +37,13 @@ router.post(
   handleUploadError,
   ctrl.addPhotos
 );
+router.delete("/me", authenticatePublic, ctrl.deleteAccount);
 
 // Wallet
 router.get("/wallet", authenticatePublic, ctrl.getWallet);
 
 // Browse & Featured (guest-friendly)
-router.get(
-  "/featured/boosts",
-  optionalPublicAuth,
-  ctrl.featuredBoosts
-);
+router.get("/featured/boosts", optionalPublicAuth, ctrl.featuredBoosts);
 router.get("/featured", optionalPublicAuth, ctrl.featured);
 router.get("/", optionalPublicAuth, ctrl.list);
 
@@ -54,11 +51,7 @@ router.get("/", optionalPublicAuth, ctrl.list);
 router.get("/users/:id", authenticatePublic, ctrl.getById);
 router.post("/users/:id/view", authenticatePublic, ctrl.trackProfileView);
 
-router.get(
-  "/boosts/targeted",
-  authenticatePublic,
-  ctrl.targetedBoostMatches
-);
+router.get("/boosts/targeted", authenticatePublic, ctrl.targetedBoostMatches);
 router.get("/boosts/status", authenticatePublic, ctrl.getBoostStatus);
 
 module.exports = router;

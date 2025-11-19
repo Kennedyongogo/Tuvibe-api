@@ -8,6 +8,15 @@ const {
   TokenTransaction,
   ProfileView,
   ProfileBoost,
+  LookingForPost,
+  Favourite,
+  Notification,
+  Report,
+  ProfileTag,
+  ChatUnlock,
+  PremiumVerification,
+  Payment,
+  AccountSuspension,
 } = require("../models");
 const { sequelize } = require("../config/database");
 const {
@@ -748,6 +757,15 @@ exports.updateMe = async (req, res) => {
       updates.age = computedAge !== null ? computedAge : null;
     }
 
+    // Get current user to compare bio changes
+    const currentUser = await PublicUser.findByPk(req.publicUserId);
+    if (!currentUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
     // Add fields from req.body (works for both JSON and form-data)
     for (const key of allowed) {
       if (
@@ -764,9 +782,18 @@ exports.updateMe = async (req, res) => {
             updates[key] = coordValue;
           }
         } else if (key === "bio") {
-          // If bio is being updated, set moderation status to pending
-          updates[key] = req.body[key];
-          updates.bio_moderation_status = "pending";
+          // Only set moderation status to pending if bio content has actually changed
+          const newBio = req.body[key].trim();
+          const currentBio = currentUser.bio ? currentUser.bio.trim() : "";
+
+          if (newBio !== currentBio) {
+            // Bio content has changed, set to pending
+            updates[key] = newBio;
+            updates.bio_moderation_status = "pending";
+          } else {
+            // Bio content hasn't changed, don't update bio or its moderation status
+            // Skip adding bio to updates
+          }
         } else {
           updates[key] = req.body[key];
         }
@@ -2025,6 +2052,164 @@ exports.addPhotos = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to add photos",
+    });
+  }
+};
+
+// Delete user account
+exports.deleteAccount = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const { password } = req.body;
+    const userId = req.publicUserId;
+
+    // Find user
+    const user = await PublicUser.findByPk(userId, { transaction });
+    if (!user) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Optional password confirmation for security
+    if (password) {
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        await transaction.rollback();
+        return res.status(401).json({
+          success: false,
+          message:
+            "Invalid password. Please provide the correct password to delete your account.",
+        });
+      }
+    }
+
+    // Delete related data in proper order (respecting foreign key constraints)
+    // Delete user's favourites (where user is the one favouriting)
+    await Favourite.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete favourites where user is the target (where user is being favourited)
+    await Favourite.destroy({
+      where: { favourite_user_id: userId },
+      transaction,
+    });
+
+    // Delete user's looking for posts
+    await LookingForPost.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete user's notifications
+    await Notification.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete profile views where user is the viewer
+    await ProfileView.destroy({
+      where: { viewer_id: userId },
+      transaction,
+    });
+
+    // Delete profile views where user is the viewed
+    await ProfileView.destroy({
+      where: { viewed_id: userId },
+      transaction,
+    });
+
+    // Delete reports where user is the reporter
+    await Report.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete reports where user is the reported
+    await Report.destroy({
+      where: { reported_user_id: userId },
+      transaction,
+    });
+
+    // Delete profile tags where user is the tagger
+    await ProfileTag.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete profile tags where user is the tagged
+    await ProfileTag.destroy({
+      where: { tagged_user_id: userId },
+      transaction,
+    });
+
+    // Delete profile boosts
+    await ProfileBoost.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete chat unlocks
+    await ChatUnlock.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete premium verifications
+    await PremiumVerification.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete token transactions
+    await TokenTransaction.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete payments
+    await Payment.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Delete account suspensions
+    await AccountSuspension.destroy({
+      where: { public_user_id: userId },
+      transaction,
+    });
+
+    // Finally, delete the user account
+    await user.destroy({ transaction });
+
+    // Commit transaction
+    await transaction.commit();
+
+    // Send logout event via SSE if available
+    try {
+      sendEventToUser(userId, {
+        type: "account_deleted",
+        message: "Your account has been deleted successfully",
+      });
+    } catch (sseError) {
+      // Ignore SSE errors - account is already deleted
+      console.log("SSE notification failed (expected after account deletion)");
+    }
+
+    return res.json({
+      success: true,
+      message: "Account deleted successfully",
+    });
+  } catch (err) {
+    await transaction.rollback();
+    console.error("deleteAccount error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete account. Please try again later.",
     });
   }
 };
