@@ -6,6 +6,7 @@ const cron = require("node-cron");
 const { initializeModels, setupAssociations } = require("./models");
 const { errorHandler } = require("./middleware/errorHandler");
 const storyService = require("./services/storyService");
+const notificationService = require("./services/notificationService");
 
 // Import active routes only
 const adminUserRoutes = require("./routes/adminUserRoutes");
@@ -29,6 +30,7 @@ const mlRoutes = require("./routes/mlRoutes");
 const suspensionRoutes = require("./routes/suspensionRoutes");
 const sseRoutes = require("./routes/sseRoutes");
 const storyRoutes = require("./routes/storyRoutes");
+const postRoutes = require("./routes/postRoutes");
 const {
   forgotPassword: adminForgotPassword,
 } = require("./controllers/adminUserController");
@@ -54,6 +56,7 @@ const projectsUploadPath = path.join(__dirname, "..", "uploads", "projects");
 const inquiriesUploadPath = path.join(__dirname, "..", "uploads", "inquiries");
 const marketUploadPath = path.join(__dirname, "..", "uploads", "market");
 const storiesUploadPath = path.join(__dirname, "..", "uploads", "stories");
+const postsUploadPath = path.join(__dirname, "..", "uploads", "posts");
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
@@ -94,6 +97,12 @@ console.log(
   fs.existsSync(storiesUploadPath)
 );
 console.log(
+  "  - Posts:",
+  postsUploadPath,
+  "- Exists:",
+  fs.existsSync(postsUploadPath)
+);
+console.log(
   "  - Misc:",
   miscUploadPath,
   "- Exists:",
@@ -107,6 +116,7 @@ app.use("/uploads/projects", express.static(projectsUploadPath));
 app.use("/uploads/inquiries", express.static(inquiriesUploadPath));
 app.use("/uploads/market", express.static(marketUploadPath));
 app.use("/uploads/stories", express.static(storiesUploadPath));
+app.use("/uploads/posts", express.static(postsUploadPath));
 app.use("/uploads/misc", express.static(miscUploadPath));
 
 // API routes
@@ -130,7 +140,7 @@ app.use("/api/tokens", tokenRoutes);
 app.use("/api/chat", chatUnlockRoutes);
 app.use("/api/verification", premiumVerificationRoutes);
 app.use("/api/market", marketItemRoutes);
-app.use("/api/posts", lookingForPostRoutes);
+app.use("/api/looking-for-posts", lookingForPostRoutes);
 app.use("/api/favourites", favouriteRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/paystack/webhook", paystackWebhookRoutes);
@@ -143,11 +153,13 @@ app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/ml", mlRoutes);
 app.use("/api/sse", sseRoutes.router);
 app.use("/api/stories", storyRoutes);
+app.use("/api/posts", postRoutes);
 console.log("✅ TuVibe routes registered");
 console.log("✅ /api/chatbot route registered");
 console.log("✅ /api/ml route registered");
 console.log("✅ /api/sse route registered");
 console.log("✅ /api/stories route registered");
+console.log("✅ /api/posts route registered");
 
 // Removed legacy routes: projects, documents, inquiries, audit, reports, analytics, chatbot, testimonies
 
@@ -192,6 +204,7 @@ const createUploadDirectories = () => {
     path.join(__dirname, "..", "uploads", "inquiries"),
     path.join(__dirname, "..", "uploads", "market"),
     path.join(__dirname, "..", "uploads", "stories"),
+    path.join(__dirname, "..", "uploads", "posts"),
     path.join(__dirname, "..", "uploads", "misc"),
   ];
 
@@ -239,7 +252,34 @@ const startStoryJobs = () => {
     }
   });
 
+  // Clean up orphaned reactions/comments/views every 6 hours
+  cron.schedule("0 */6 * * *", async () => {
+    try {
+      await storyService.cleanupOrphanedRecords();
+    } catch (err) {
+      console.error("[Story Jobs] Error cleaning orphaned records:", err);
+    }
+  });
+
   console.log("✅ Story maintenance jobs started");
+};
+
+// Start notification cleanup jobs
+const startNotificationJobs = () => {
+  // Clean up old notifications daily at 2 AM
+  cron.schedule("0 2 * * *", async () => {
+    try {
+      await notificationService.cleanupOldNotifications(7, 7);
+      // 7 days (1 week) for all notifications (read and unread)
+    } catch (err) {
+      console.error(
+        "[Notification Jobs] Error cleaning old notifications:",
+        err
+      );
+    }
+  });
+
+  console.log("✅ Notification maintenance jobs started");
 };
 
 // Initialize models and associations
@@ -264,6 +304,9 @@ const initializeApp = async () => {
 
     // Start story maintenance jobs
     startStoryJobs();
+
+    // Start notification cleanup jobs
+    startNotificationJobs();
 
     // Chatbot removed
 

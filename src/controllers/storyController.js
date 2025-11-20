@@ -8,8 +8,10 @@ const {
   StoryCollection,
   StoryChallenge,
   PublicUser,
+  Notification,
 } = require("../models");
 const path = require("path");
+const storyService = require("../services/storyService");
 
 // Helper to calculate expiration date (24 hours from now)
 const getExpirationDate = () => {
@@ -24,11 +26,13 @@ exports.createStory = async (req, res) => {
   console.log("📋 [Backend] Request details:", {
     userId: req.publicUserId,
     hasFile: !!req.file,
-    fileInfo: req.file ? {
-      filename: req.file.filename,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-    } : null,
+    fileInfo: req.file
+      ? {
+          filename: req.file.filename,
+          mimetype: req.file.mimetype,
+          size: req.file.size,
+        }
+      : null,
     body: req.body,
   });
 
@@ -43,25 +47,38 @@ exports.createStory = async (req, res) => {
       challenge_id,
       scheduled_at,
       metadata,
+      background_color,
     } = req.body;
 
-    if (!req.file) {
-      console.log("❌ [Backend] No file uploaded");
-      return res
-        .status(400)
-        .json({ success: false, message: "Media file is required" });
+    // Allow text-only stories (no file required if caption is provided)
+    const isTextOnly = !req.file && caption && caption.trim();
+
+    if (!req.file && !isTextOnly) {
+      console.log("❌ [Backend] No file uploaded and no text provided");
+      return res.status(400).json({
+        success: false,
+        message:
+          "Please provide either a media file or text content for your story",
+      });
     }
 
-    // Determine media type
-    const isVideo = req.file.mimetype.startsWith("video/");
-    const mediaType = isVideo ? "video" : "photo";
-    const mediaUrl = `stories/${req.file.filename}`;
+    let mediaType = "text";
+    let mediaUrl = null;
 
-    console.log("🎬 [Backend] Media type determined:", {
-      isVideo,
-      mediaType,
-      mediaUrl,
-    });
+    if (req.file) {
+      // Determine media type
+      const isVideo = req.file.mimetype.startsWith("video/");
+      mediaType = isVideo ? "video" : "photo";
+      mediaUrl = `stories/${req.file.filename}`;
+
+      console.log("🎬 [Backend] Media type determined:", {
+        isVideo,
+        mediaType,
+        mediaUrl,
+      });
+    } else {
+      console.log("📝 [Backend] Text-only story detected");
+    }
 
     // Calculate expiration
     const expiresAt = scheduled_at
@@ -70,11 +87,28 @@ exports.createStory = async (req, res) => {
 
     console.log("⏰ [Backend] Expiration date:", expiresAt);
 
+    // Prepare metadata with background color for text stories
+    let storyMetadata = {};
+    if (metadata) {
+      try {
+        storyMetadata =
+          typeof metadata === "string" ? JSON.parse(metadata) : metadata;
+      } catch (e) {
+        console.error("Failed to parse metadata:", e);
+        storyMetadata = {};
+      }
+    }
+
+    // Add background color to metadata for text stories
+    if (isTextOnly && background_color) {
+      storyMetadata.background_color = background_color;
+    }
+
     const storyData = {
       public_user_id: req.publicUserId,
       media_type: mediaType,
       media_url: mediaUrl,
-      caption: caption || null,
+      caption: caption ? caption.trim() : null,
       location: location || null,
       latitude: latitude ? parseFloat(latitude) : null,
       longitude: longitude ? parseFloat(longitude) : null,
@@ -85,7 +119,7 @@ exports.createStory = async (req, res) => {
       scheduled_at: scheduled_at ? new Date(scheduled_at) : null,
       is_published: scheduled_at ? false : true,
       moderation_status: "pending",
-      metadata: metadata ? JSON.parse(metadata) : {},
+      metadata: storyMetadata,
     };
 
     console.log("💾 [Backend] Story data prepared:", storyData);
@@ -144,45 +178,41 @@ exports.getStoriesFeed = async (req, res) => {
         { public_user_id: userId }, // User's own stories (including pending)
         { moderation_status: "approved" }, // Others' stories must be approved
       ];
-      console.log("✅ [Backend] User authenticated - will show own stories (including pending) and approved stories from others");
+      console.log(
+        "✅ [Backend] User authenticated - will show own stories (including pending) and approved stories from others"
+      );
     } else {
       // For non-authenticated users, only show approved stories
       baseConditions.moderation_status = "approved";
-      console.log("👤 [Backend] User not authenticated - will show only approved stories");
+      console.log(
+        "👤 [Backend] User not authenticated - will show only approved stories"
+      );
     }
 
     // Location-based filtering if coordinates provided
     // IMPORTANT: User's own stories should always be included, even without coordinates
+    // For authenticated users, show all approved stories (not just nearby) to ensure visibility
     if (latitude && longitude && userId) {
       const lat = parseFloat(latitude);
       const lon = parseFloat(longitude);
-      const rad = parseFloat(radius);
+      const rad = parseFloat(radius) || 50; // Default to 50km if not provided
 
-      console.log("📍 [Backend] Location filter requested, but user is authenticated");
-      console.log("📍 [Backend] Will include user's own stories regardless of location");
-      console.log("📍 [Backend] Location filter will only apply to other users' stories");
-      
-      // For authenticated users, we need to restructure the query:
-      // Show: (user's own stories) OR (approved stories within location)
-      // We'll rebuild baseConditions to handle this properly
-      const locationFilter = {
-        latitude: {
-          [Op.between]: [lat - rad / 111, lat + rad / 111],
-        },
-        longitude: {
-          [Op.between]: [lon - rad / 111, lon + rad / 111],
-        },
-      };
+      console.log(
+        "📍 [Backend] Location filter requested, but user is authenticated"
+      );
+      console.log(
+        "📍 [Backend] Will include user's own stories regardless of location"
+      );
+      console.log(
+        "📍 [Backend] Will show ALL approved stories (location filter is informational only)"
+      );
 
-      // Restructure: user's own stories OR (approved + location)
+      // For authenticated users: Show all approved stories regardless of location
+      // This ensures users can see stories from all accounts, not just nearby ones
+      // Location is still used for sorting/prioritization but doesn't filter out stories
       baseConditions[Op.or] = [
         { public_user_id: userId }, // User's own stories (no location/moderation filter)
-        {
-          [Op.and]: [
-            { moderation_status: "approved" },
-            locationFilter,
-          ],
-        },
+        { moderation_status: "approved" }, // All approved stories from other users
       ];
     } else if (latitude && longitude && !userId) {
       // For non-authenticated users, apply location filter
@@ -190,7 +220,9 @@ exports.getStoriesFeed = async (req, res) => {
       const lon = parseFloat(longitude);
       const rad = parseFloat(radius);
 
-      console.log("📍 [Backend] Location filter applied for non-authenticated user");
+      console.log(
+        "📍 [Backend] Location filter applied for non-authenticated user"
+      );
       baseConditions.latitude = {
         [Op.between]: [lat - rad / 111, lat + rad / 111],
       };
@@ -200,7 +232,10 @@ exports.getStoriesFeed = async (req, res) => {
     }
 
     const whereClause = baseConditions;
-    console.log("🔍 [Backend] Final where clause:", JSON.stringify(whereClause, null, 2));
+    console.log(
+      "🔍 [Backend] Final where clause:",
+      JSON.stringify(whereClause, null, 2)
+    );
 
     const stories = await Story.findAll({
       where: whereClause,
@@ -221,6 +256,9 @@ exports.getStoriesFeed = async (req, res) => {
           as: "reactions",
           where: { user_id: userId },
           required: false,
+          separate: true, // Use separate query to allow ordering
+          order: [["createdAt", "DESC"]],
+          limit: 1, // Get only the most recent reaction for UI
         },
         {
           model: StoryChallenge,
@@ -238,13 +276,16 @@ exports.getStoriesFeed = async (req, res) => {
     });
 
     console.log("📊 [Backend] Stories found:", stories.length);
-    console.log("📊 [Backend] Stories details:", stories.map(s => ({
-      id: s.id,
-      userId: s.public_user_id,
-      mediaUrl: s.media_url,
-      moderationStatus: s.moderation_status,
-      hasLocation: !!(s.latitude && s.longitude),
-    })));
+    console.log(
+      "📊 [Backend] Stories details:",
+      stories.map((s) => ({
+        id: s.id,
+        userId: s.public_user_id,
+        mediaUrl: s.media_url,
+        moderationStatus: s.moderation_status,
+        hasLocation: !!(s.latitude && s.longitude),
+      }))
+    );
 
     // Format stories with view status
     const formattedStories = stories.map((story) => {
@@ -386,14 +427,15 @@ exports.getStory = async (req, res) => {
       await story.increment("view_count");
     }
 
-    // Check user's reaction
+    // Get user's most recent reaction (for UI display)
     const userReaction = await StoryReaction.findOne({
       where: { story_id: storyId, user_id: userId },
+      order: [["createdAt", "DESC"]],
     });
 
     const storyObj = story.toJSON();
     storyObj.has_viewed = !!hasViewed;
-    storyObj.user_reaction = userReaction;
+    storyObj.user_reaction = userReaction; // Most recent reaction for UI
 
     return res.json({
       success: true,
@@ -485,7 +527,8 @@ exports.deleteStory = async (req, res) => {
         .json({ success: false, message: "Story not found" });
     }
 
-    await story.destroy();
+    // Delete story and all related records using the same function as cleanup
+    await storyService.deleteStoryWithRelatedRecords(story);
 
     return res.json({
       success: true,
@@ -504,40 +547,63 @@ exports.deleteStory = async (req, res) => {
 exports.addReaction = async (req, res) => {
   try {
     const { storyId } = req.params;
-    const { reaction_type = "like" } = req.body;
+    const { reaction_type = "like", emoji } = req.body;
     const userId = req.publicUserId;
 
-    const story = await Story.findByPk(storyId);
+    const story = await Story.findByPk(storyId, {
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "username"],
+        },
+      ],
+    });
     if (!story) {
       return res
         .status(404)
         .json({ success: false, message: "Story not found" });
     }
 
-    // Check if reaction already exists
-    const existingReaction = await StoryReaction.findOne({
-      where: { story_id: storyId, user_id: userId },
-    });
-
-    if (existingReaction) {
-      // Update existing reaction
-      await existingReaction.update({ reaction_type });
-      return res.json({
-        success: true,
-        message: "Reaction updated",
-        data: { reaction: existingReaction },
+    // Prevent story owners from reacting to their own stories
+    if (story.public_user_id === userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot react to your own story",
       });
     }
 
-    // Create new reaction
+    // Get the user who is reacting
+    const reactingUser = await PublicUser.findByPk(userId, {
+      attributes: ["id", "name", "username"],
+    });
+
+    // Always create a new reaction (allow multiple reactions per user)
     const reaction = await StoryReaction.create({
       story_id: storyId,
       user_id: userId,
-      reaction_type,
+      reaction_type: emoji ? "emoji" : reaction_type,
+      emoji: emoji || null,
     });
 
     // Update reaction count
     await story.increment("reaction_count");
+
+    // Create notification for story owner
+    try {
+      const reactionDisplay = emoji || reaction_type;
+      const userName =
+        reactingUser?.name || reactingUser?.username || "Someone";
+      await Notification.create({
+        public_user_id: story.public_user_id,
+        title: "New Reaction on Your Story",
+        message: `${userName} reacted to your story with ${reactionDisplay}`,
+        isRead: false,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create reaction notification:", notifErr);
+      // Don't fail the request if notification creation fails
+    }
 
     return res.json({
       success: true,
@@ -556,12 +622,25 @@ exports.addReaction = async (req, res) => {
 // Remove reaction from story
 exports.removeReaction = async (req, res) => {
   try {
-    const { storyId } = req.params;
+    const { storyId, reactionId } = req.params;
     const userId = req.publicUserId;
 
-    const reaction = await StoryReaction.findOne({
-      where: { story_id: storyId, user_id: userId },
-    });
+    // If reactionId is provided, remove that specific reaction
+    // Otherwise, remove the most recent reaction from this user for this story
+    let reaction;
+
+    if (reactionId) {
+      // Remove specific reaction
+      reaction = await StoryReaction.findOne({
+        where: { id: reactionId, story_id: storyId, user_id: userId },
+      });
+    } else {
+      // Remove most recent reaction
+      reaction = await StoryReaction.findOne({
+        where: { story_id: storyId, user_id: userId },
+        order: [["createdAt", "DESC"]],
+      });
+    }
 
     if (!reaction) {
       return res
@@ -603,12 +682,33 @@ exports.addComment = async (req, res) => {
         .json({ success: false, message: "Comment content is required" });
     }
 
-    const story = await Story.findByPk(storyId);
+    const story = await Story.findByPk(storyId, {
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "username"],
+        },
+      ],
+    });
     if (!story) {
       return res
         .status(404)
         .json({ success: false, message: "Story not found" });
     }
+
+    // Prevent story owners from commenting on their own stories
+    if (story.public_user_id === userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot comment on your own story",
+      });
+    }
+
+    // Get the user who is commenting
+    const commentingUser = await PublicUser.findByPk(userId, {
+      attributes: ["id", "name", "username"],
+    });
 
     const comment = await StoryComment.create({
       story_id: storyId,
@@ -630,6 +730,25 @@ exports.addComment = async (req, res) => {
         },
       ],
     });
+
+    // Create notification for story owner
+    try {
+      const userName =
+        commentingUser?.name || commentingUser?.username || "Someone";
+      const commentPreview =
+        content.trim().length > 50
+          ? content.trim().substring(0, 50) + "..."
+          : content.trim();
+      await Notification.create({
+        public_user_id: story.public_user_id,
+        title: "New Comment on Your Story",
+        message: `${userName} commented: "${commentPreview}"`,
+        isRead: false,
+      });
+    } catch (notifErr) {
+      console.error("Failed to create comment notification:", notifErr);
+      // Don't fail the request if notification creation fails
+    }
 
     return res.status(201).json({
       success: true,
@@ -762,7 +881,10 @@ exports.getHighlights = async (req, res) => {
           ],
         },
       ],
-      order: [["order", "ASC"], ["createdAt", "DESC"]],
+      order: [
+        ["order", "ASC"],
+        ["createdAt", "DESC"],
+      ],
     });
 
     return res.json({
@@ -839,10 +961,7 @@ exports.getChallenges = async (req, res) => {
       where: {
         is_active: true,
         start_date: { [Op.lte]: new Date() },
-        [Op.or]: [
-          { end_date: null },
-          { end_date: { [Op.gte]: new Date() } },
-        ],
+        [Op.or]: [{ end_date: null }, { end_date: { [Op.gte]: new Date() } }],
       },
       include: [
         {
@@ -858,7 +977,10 @@ exports.getChallenges = async (req, res) => {
           order: [["createdAt", "DESC"]],
         },
       ],
-      order: [["participant_count", "DESC"], ["createdAt", "DESC"]],
+      order: [
+        ["participant_count", "DESC"],
+        ["createdAt", "DESC"],
+      ],
       limit: parseInt(limit),
     });
 
@@ -948,3 +1070,235 @@ exports.getStoryAnalytics = async (req, res) => {
   }
 };
 
+// Get all stories for moderation (admin only)
+exports.getStoriesForModeration = async (req, res) => {
+  try {
+    const { status, page = 1, pageSize = 20 } = req.query;
+    const limit = Math.min(Number(pageSize) || 20, 100);
+    const offset = (Number(page) - 1) * limit;
+
+    const where = {};
+    if (status) {
+      where.moderation_status = status;
+    }
+
+    const { count, rows } = await Story.findAndCountAll({
+      where,
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "username", "photo", "email"],
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+      limit,
+      offset,
+    });
+
+    const formatted = rows.map((story) => {
+      const storyObj = story.toJSON();
+      return {
+        id: storyObj.id,
+        media_url: storyObj.media_url,
+        media_type: storyObj.media_type,
+        caption: storyObj.caption,
+        moderation_status: storyObj.moderation_status,
+        is_published: storyObj.is_published,
+        expires_at: storyObj.expires_at,
+        createdAt: storyObj.createdAt,
+        user: storyObj.user,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: formatted,
+      pagination: {
+        total: count,
+        page: Number(page),
+        pageSize: limit,
+        totalPages: Math.ceil(count / limit),
+      },
+    });
+  } catch (err) {
+    console.error("getStoriesForModeration error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch stories for moderation",
+    });
+  }
+};
+
+// Approve story (admin only)
+exports.approveStory = async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const { notes } = req.body;
+
+    const story = await Story.findByPk(storyId, {
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "email"],
+        },
+      ],
+    });
+
+    if (!story) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Story not found" });
+    }
+
+    await story.update({
+      moderation_status: "approved",
+      is_published: true,
+    });
+
+    // Send notification to user
+    if (story.user && story.user.id) {
+      const { Notification } = require("../models");
+      await Notification.create({
+        public_user_id: story.user.id,
+        type: "story_approved",
+        title: "Story Approved",
+        message: "Your story has been approved and is now visible to others.",
+        isRead: false,
+        data: { story_id: story.id },
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Story approved successfully",
+      data: {
+        id: story.id,
+        moderation_status: "approved",
+      },
+    });
+  } catch (err) {
+    console.error("approveStory error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to approve story",
+    });
+  }
+};
+
+// Reject story (admin only)
+exports.rejectStory = async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const { notes, reason } = req.body;
+
+    const story = await Story.findByPk(storyId, {
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "email"],
+        },
+      ],
+    });
+
+    if (!story) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Story not found" });
+    }
+
+    await story.update({
+      moderation_status: "rejected",
+      is_published: false,
+    });
+
+    // Send notification to user
+    if (story.user && story.user.id) {
+      const { Notification } = require("../models");
+      await Notification.create({
+        public_user_id: story.user.id,
+        type: "story_rejected",
+        title: "Story Rejected",
+        message:
+          reason ||
+          "Your story has been rejected and will not be visible to others.",
+        isRead: false,
+        data: { story_id: story.id, reason, notes },
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Story rejected successfully",
+      data: {
+        id: story.id,
+        moderation_status: "rejected",
+      },
+    });
+  } catch (err) {
+    console.error("rejectStory error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reject story",
+    });
+  }
+};
+
+// Get story viewers (only for story owner)
+exports.getStoryViewers = async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const userId = req.publicUserId;
+
+    // Find the story
+    const story = await Story.findByPk(storyId);
+    if (!story) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Story not found" });
+    }
+
+    // Only story owner can see viewers
+    if (story.public_user_id !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "Only story owner can view the viewers list",
+      });
+    }
+
+    // Get all views with user information
+    const views = await StoryView.findAll({
+      where: { story_id: storyId },
+      include: [
+        {
+          model: PublicUser,
+          as: "viewer",
+          attributes: ["id", "name", "username", "photo", "is_verified"],
+        },
+      ],
+      order: [["viewed_at", "DESC"]],
+    });
+
+    const viewers = views.map((view) => ({
+      id: view.viewer.id,
+      name: view.viewer.name,
+      username: view.viewer.username,
+      photo: view.viewer.photo,
+      isVerified: view.viewer.is_verified,
+      viewedAt: view.viewed_at,
+    }));
+
+    return res.json({
+      success: true,
+      data: { viewers },
+    });
+  } catch (err) {
+    console.error("getStoryViewers error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch story viewers",
+    });
+  }
+};

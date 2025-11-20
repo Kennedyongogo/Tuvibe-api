@@ -25,6 +25,10 @@ const StoryComment = require("./storyComment")(sequelize);
 const StoryHighlight = require("./storyHighlight")(sequelize);
 const StoryCollection = require("./storyCollection")(sequelize);
 const StoryChallenge = require("./storyChallenge")(sequelize);
+const Post = require("./post")(sequelize);
+const PostReaction = require("./postReaction")(sequelize);
+const PostComment = require("./postComment")(sequelize);
+const CommentReaction = require("./commentReaction")(sequelize);
 
 const models = {
   AdminUser,
@@ -50,6 +54,10 @@ const models = {
   StoryHighlight,
   StoryCollection,
   StoryChallenge,
+  Post,
+  PostReaction,
+  PostComment,
+  CommentReaction,
 };
 
 const ensureProfileBoostTargetAreaColumn = async () => {
@@ -86,6 +94,46 @@ const ensureProfileBoostTargetAreaColumn = async () => {
   }
 };
 
+const removeStoryReactionUniqueConstraint = async () => {
+  try {
+    // Check if the unique index exists and drop it
+    const [results] = await sequelize.query(`
+      SELECT indexname 
+      FROM pg_indexes 
+      WHERE tablename = 'story_reactions' 
+      AND indexdef LIKE '%UNIQUE%' 
+      AND indexdef LIKE '%story_id%' 
+      AND indexdef LIKE '%user_id%'
+    `);
+
+    if (results && results.length > 0) {
+      const indexName = results[0].indexname;
+      console.log(`🔧 Dropping unique constraint: ${indexName}`);
+      await sequelize.query(`DROP INDEX IF EXISTS "${indexName}"`);
+      console.log(`✅ Unique constraint ${indexName} dropped successfully`);
+    } else {
+      console.log(
+        "ℹ️ No unique constraint found on story_reactions (story_id, user_id)"
+      );
+    }
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ story_reactions table not found yet; skipping unique constraint removal."
+      );
+      return;
+    }
+    console.error(
+      "⚠️ Failed to remove unique constraint from story_reactions:",
+      error
+    );
+    // Don't throw - allow sync to continue
+  }
+};
+
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
@@ -116,8 +164,13 @@ const initializeModels = async () => {
     await StoryChallenge.sync({ force: false, alter: false });
     await Story.sync({ force: false, alter: false });
     await StoryView.sync({ force: false, alter: false });
+    await removeStoryReactionUniqueConstraint();
     await StoryReaction.sync({ force: false, alter: false });
     await StoryComment.sync({ force: false, alter: false });
+    await Post.sync({ force: false, alter: false });
+    await PostReaction.sync({ force: false, alter: false });
+    await PostComment.sync({ force: false, alter: false });
+    await CommentReaction.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -471,10 +524,92 @@ const setupAssociations = () => {
       as: "challenge",
     });
 
+    // Post associations
+    models.PublicUser.hasMany(models.Post, {
+      foreignKey: "public_user_id",
+      as: "posts",
+    });
+    models.Post.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "user",
+    });
+
+    // PostReaction associations
+    models.Post.hasMany(models.PostReaction, {
+      foreignKey: "post_id",
+      as: "reactions",
+      onDelete: "CASCADE",
+    });
+    models.PostReaction.belongsTo(models.Post, {
+      foreignKey: "post_id",
+      as: "post",
+    });
+    models.PostReaction.belongsTo(models.PublicUser, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.PublicUser.hasMany(models.PostReaction, {
+      foreignKey: "user_id",
+      as: "postReactions",
+    });
+
+    // PostComment associations
+    models.Post.hasMany(models.PostComment, {
+      foreignKey: "post_id",
+      as: "comments",
+      onDelete: "CASCADE",
+    });
+    models.PostComment.belongsTo(models.Post, {
+      foreignKey: "post_id",
+      as: "post",
+    });
+    models.PostComment.belongsTo(models.PublicUser, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.PublicUser.hasMany(models.PostComment, {
+      foreignKey: "user_id",
+      as: "postComments",
+    });
+    models.PostComment.hasMany(models.PostComment, {
+      foreignKey: "parent_comment_id",
+      as: "replies",
+    });
+    models.PostComment.belongsTo(models.PostComment, {
+      foreignKey: "parent_comment_id",
+      as: "parentComment",
+    });
+
+    // CommentReaction associations
+    models.PostComment.hasMany(models.CommentReaction, {
+      foreignKey: "comment_id",
+      as: "reactions",
+      onDelete: "CASCADE",
+    });
+    models.CommentReaction.belongsTo(models.PostComment, {
+      foreignKey: "comment_id",
+      as: "comment",
+    });
+    models.CommentReaction.belongsTo(models.PublicUser, {
+      foreignKey: "user_id",
+      as: "user",
+    });
+    models.PublicUser.hasMany(models.CommentReaction, {
+      foreignKey: "user_id",
+      as: "commentReactions",
+    });
+
     console.log("✅ All associations set up successfully");
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }
 };
 
-module.exports = { ...models, initializeModels, setupAssociations, sequelize };
+// Export models object directly along with spread to ensure associations work
+module.exports = {
+  ...models,
+  models, // Also export models object directly for association access
+  initializeModels,
+  setupAssociations,
+  sequelize,
+};

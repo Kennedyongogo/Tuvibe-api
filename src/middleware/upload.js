@@ -35,6 +35,12 @@ const storage = multer.diskStorage({
       file.fieldname === "story_video"
     ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "stories");
+    } else if (
+      file.fieldname === "post_media" ||
+      file.fieldname === "post_photo" ||
+      file.fieldname === "post_video"
+    ) {
+      uploadPath = path.join(__dirname, "..", "..", "uploads", "posts");
     } else {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "misc");
     }
@@ -211,6 +217,18 @@ const uploadStoryMediaMultiple = (req, res, next) => {
   }
 };
 
+// Middleware for post media (photo or video)
+const uploadPostMedia = (req, res, next) => {
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.single("post_media")(req, res, next);
+  } else {
+    next();
+  }
+};
+
 // Middleware for mixed uploads (multiple fields)
 const uploadMixed = upload.fields([
   { name: "profile_image", maxCount: 1 },
@@ -308,6 +326,7 @@ module.exports = {
   uploadMarketImages,
   uploadStoryMedia,
   uploadStoryMediaMultiple,
+  uploadPostMedia,
   uploadMixed,
   handleUploadError,
   deleteFile,

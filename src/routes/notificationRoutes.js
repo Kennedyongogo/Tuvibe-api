@@ -5,6 +5,7 @@ const { authenticateAdmin } = require("../middleware/auth");
 const ctrl = require("../controllers/notificationController");
 
 router.get("/", authenticatePublic, ctrl.listMine);
+router.get("/stats", authenticatePublic, ctrl.getStats);
 router.post("/:id/read", authenticatePublic, ctrl.markRead);
 
 router.post("/admin", authenticateAdmin, ctrl.adminCreate);

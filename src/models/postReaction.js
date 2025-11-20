@@ -1,22 +1,22 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const StoryReaction = sequelize.define(
-    "StoryReaction",
+  const PostReaction = sequelize.define(
+    "PostReaction",
     {
       id: {
         type: DataTypes.UUID,
         primaryKey: true,
         defaultValue: DataTypes.UUIDV4,
       },
-      story_id: {
+      post_id: {
         type: DataTypes.UUID,
         allowNull: false,
         references: {
-          model: "stories",
+          model: "posts",
           key: "id",
         },
-        field: "story_id",
+        field: "post_id",
       },
       user_id: {
         type: DataTypes.UUID,
@@ -50,21 +50,21 @@ module.exports = (sequelize) => {
       },
     },
     {
-      tableName: "story_reactions",
+      tableName: "post_reactions",
       timestamps: true,
       indexes: [
         {
-          fields: ["story_id"],
+          fields: ["post_id"],
         },
         {
           fields: ["user_id"],
         },
         {
-          fields: ["story_id", "user_id"],
+          fields: ["post_id", "user_id"],
         },
       ],
     }
   );
 
-  return StoryReaction;
+  return PostReaction;
 };

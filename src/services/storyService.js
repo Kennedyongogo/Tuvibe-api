@@ -3,6 +3,67 @@ const { Story, StoryView, StoryReaction, StoryComment } = require("../models");
 const fs = require("fs");
 const path = require("path");
 
+// Helper function to delete a story and all related records
+// This matches the exact logic from deleteStory controller
+exports.deleteStoryWithRelatedRecords = async (story) => {
+  const storyId = story.id;
+
+  // Delete all related records first to avoid foreign key constraint violations
+  // Delete story reactions
+  await StoryReaction.destroy({
+    where: { story_id: storyId },
+  });
+
+  // Delete story views
+  await StoryView.destroy({
+    where: { story_id: storyId },
+  });
+
+  // Delete story comments (including replies)
+  await StoryComment.destroy({
+    where: { story_id: storyId },
+  });
+
+  // Delete media file if exists
+  if (story.media_url) {
+    const filePath = path.join(
+      __dirname,
+      "..",
+      "..",
+      "uploads",
+      story.media_url
+    );
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        console.error(`Error deleting media file for story ${storyId}:`, err);
+      }
+    }
+  }
+
+  // Delete thumbnail if exists
+  if (story.thumbnail_url) {
+    const thumbPath = path.join(
+      __dirname,
+      "..",
+      "..",
+      "uploads",
+      story.thumbnail_url
+    );
+    if (fs.existsSync(thumbPath)) {
+      try {
+        fs.unlinkSync(thumbPath);
+      } catch (err) {
+        console.error(`Error deleting thumbnail for story ${storyId}:`, err);
+      }
+    }
+  }
+
+  // Now delete the story itself
+  await story.destroy();
+};
+
 // Clean up expired stories
 exports.cleanupExpiredStories = async () => {
   try {
@@ -18,41 +79,8 @@ exports.cleanupExpiredStories = async () => {
 
     for (const story of expiredStories) {
       try {
-        // Delete associated views, reactions, and comments
-        await StoryView.destroy({ where: { story_id: story.id } });
-        await StoryReaction.destroy({ where: { story_id: story.id } });
-        await StoryComment.destroy({ where: { story_id: story.id } });
-
-        // Delete media file if exists
-        if (story.media_url) {
-          const filePath = path.join(
-            __dirname,
-            "..",
-            "..",
-            "uploads",
-            story.media_url
-          );
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        }
-
-        // Delete thumbnail if exists
-        if (story.thumbnail_url) {
-          const thumbPath = path.join(
-            __dirname,
-            "..",
-            "..",
-            "uploads",
-            story.thumbnail_url
-          );
-          if (fs.existsSync(thumbPath)) {
-            fs.unlinkSync(thumbPath);
-          }
-        }
-
-        // Delete story record
-        await story.destroy();
+        // Use the same deletion logic as deleteStory function
+        await deleteStoryWithRelatedRecords(story);
         deletedCount++;
       } catch (err) {
         console.error(`Error deleting story ${story.id}:`, err);
@@ -131,6 +159,57 @@ exports.updateChallengeCounts = async () => {
   }
 };
 
+// Clean up orphaned reactions and comments (references to non-existent stories)
+exports.cleanupOrphanedRecords = async () => {
+  try {
+    // Get all existing story IDs
+    const existingStoryIds = await Story.findAll({
+      attributes: ["id"],
+      raw: true,
+    }).then((stories) => stories.map((s) => s.id));
+
+    if (existingStoryIds.length === 0) {
+      return { deletedReactions: 0, deletedComments: 0, deletedViews: 0 };
+    }
+
+    // Find and delete orphaned reactions
+    const orphanedReactions = await StoryReaction.destroy({
+      where: {
+        story_id: { [Op.notIn]: existingStoryIds },
+      },
+    });
+
+    // Find and delete orphaned comments
+    const orphanedComments = await StoryComment.destroy({
+      where: {
+        story_id: { [Op.notIn]: existingStoryIds },
+      },
+    });
+
+    // Find and delete orphaned views
+    const orphanedViews = await StoryView.destroy({
+      where: {
+        story_id: { [Op.notIn]: existingStoryIds },
+      },
+    });
+
+    if (orphanedReactions > 0 || orphanedComments > 0 || orphanedViews > 0) {
+      console.log(
+        `[Story Cleanup] Removed ${orphanedReactions} orphaned reactions, ${orphanedComments} orphaned comments, ${orphanedViews} orphaned views`
+      );
+    }
+
+    return {
+      deletedReactions: orphanedReactions,
+      deletedComments: orphanedComments,
+      deletedViews: orphanedViews,
+    };
+  } catch (err) {
+    console.error("[Story Cleanup] Error cleaning orphaned records:", err);
+    throw err;
+  }
+};
+
 // Get story statistics
 exports.getStoryStats = async (userId) => {
   try {
@@ -165,4 +244,3 @@ exports.getStoryStats = async (userId) => {
     throw err;
   }
 };
-

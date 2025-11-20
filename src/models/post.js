@@ -1,8 +1,8 @@
 const { DataTypes } = require("sequelize");
 
 module.exports = (sequelize) => {
-  const Story = sequelize.define(
-    "Story",
+  const Post = sequelize.define(
+    "Post",
     {
       id: {
         type: DataTypes.UUID,
@@ -25,7 +25,7 @@ module.exports = (sequelize) => {
       },
       media_url: {
         type: DataTypes.STRING,
-        allowNull: true, // Allow null for text stories
+        allowNull: true, // Allow null for text posts
         field: "media_url",
       },
       thumbnail_url: {
@@ -49,48 +49,6 @@ module.exports = (sequelize) => {
         type: DataTypes.DECIMAL(11, 8),
         allowNull: true,
       },
-      expires_at: {
-        type: DataTypes.DATE,
-        allowNull: false,
-        field: "expires_at",
-      },
-      is_highlight: {
-        type: DataTypes.BOOLEAN,
-        defaultValue: false,
-        field: "is_highlight",
-      },
-      highlight_id: {
-        type: DataTypes.UUID,
-        allowNull: true,
-        references: {
-          model: "story_highlights",
-          key: "id",
-        },
-        field: "highlight_id",
-      },
-      collection_id: {
-        type: DataTypes.UUID,
-        allowNull: true,
-        references: {
-          model: "story_collections",
-          key: "id",
-        },
-        field: "collection_id",
-      },
-      challenge_id: {
-        type: DataTypes.UUID,
-        allowNull: true,
-        references: {
-          model: "story_challenges",
-          key: "id",
-        },
-        field: "challenge_id",
-      },
-      scheduled_at: {
-        type: DataTypes.DATE,
-        allowNull: true,
-        field: "scheduled_at",
-      },
       is_published: {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
@@ -101,15 +59,20 @@ module.exports = (sequelize) => {
         defaultValue: "pending",
         field: "moderation_status",
       },
-      view_count: {
-        type: DataTypes.INTEGER,
-        defaultValue: 0,
-        field: "view_count",
-      },
       reaction_count: {
         type: DataTypes.INTEGER,
         defaultValue: 0,
         field: "reaction_count",
+      },
+      like_count: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+        field: "like_count",
+      },
+      emoji_reaction_count: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+        field: "emoji_reaction_count",
       },
       comment_count: {
         type: DataTypes.INTEGER,
@@ -124,30 +87,24 @@ module.exports = (sequelize) => {
       },
     },
     {
-      tableName: "stories",
+      tableName: "posts",
       timestamps: true,
       indexes: [
         {
           fields: ["public_user_id"],
         },
         {
-          fields: ["expires_at"],
+          fields: ["is_published", "moderation_status"],
         },
         {
-          fields: ["is_published", "expires_at"],
+          fields: ["createdAt"],
         },
         {
           fields: ["location"],
-        },
-        {
-          fields: ["challenge_id"],
-        },
-        {
-          fields: ["collection_id"],
         },
       ],
     }
   );
 
-  return Story;
+  return Post;
 };

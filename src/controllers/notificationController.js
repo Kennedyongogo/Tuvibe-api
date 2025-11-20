@@ -1,4 +1,5 @@
 const { Notification } = require("../models");
+const notificationService = require("../services/notificationService");
 
 exports.listMine = async (req, res) => {
   try {
@@ -12,6 +13,21 @@ exports.listMine = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to list notifications" });
+  }
+};
+
+// Get notification stats (unread count, total count)
+exports.getStats = async (req, res) => {
+  try {
+    const stats = await notificationService.getNotificationStats(
+      req.publicUserId
+    );
+    return res.json({ success: true, data: stats });
+  } catch (err) {
+    console.error("notifications getStats error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to get notification stats" });
   }
 };
 
