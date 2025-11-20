@@ -177,7 +177,7 @@ exports.getPostsFeed = async (req, res) => {
           postObj.user_reaction = null;
         }
 
-        // Get first 3 most recent emoji reactions for display
+        // Get all emoji reactions (frontend will handle displaying first 3)
         const emojiReactions = await PostReaction.findAll({
           where: {
             post_id: post.id,
@@ -185,7 +185,6 @@ exports.getPostsFeed = async (req, res) => {
             reaction_type: "emoji",
           },
           order: [["createdAt", "DESC"]],
-          limit: 3,
         });
         postObj.recent_emoji_reactions = emojiReactions
           .map((r) => r.emoji)
@@ -322,7 +321,7 @@ exports.getPost = async (req, res) => {
     const postObj = post.toJSON();
     postObj.user_reaction = userReaction;
 
-    // Get first 3 most recent emoji reactions for display
+    // Get all emoji reactions (frontend will handle displaying first 3)
     const emojiReactions = await PostReaction.findAll({
       where: {
         post_id: postId,
@@ -330,7 +329,6 @@ exports.getPost = async (req, res) => {
         reaction_type: "emoji",
       },
       order: [["createdAt", "DESC"]],
-      limit: 3,
     });
     postObj.recent_emoji_reactions = emojiReactions
       .map((r) => r.emoji)
