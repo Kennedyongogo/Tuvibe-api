@@ -1,5 +1,11 @@
 const { Op } = require("sequelize");
-const { Story, StoryView, StoryReaction, StoryComment } = require("../models");
+const {
+  Story,
+  StoryView,
+  StoryReaction,
+  StoryComment,
+  Notification,
+} = require("../models");
 const fs = require("fs");
 const path = require("path");
 
@@ -60,6 +66,24 @@ exports.deleteStoryWithRelatedRecords = async (story) => {
     }
   }
 
+  // Delete all related notifications for the story owner
+  // Delete any notifications that mention stories (reactions, comments, approvals, etc.)
+  try {
+    await Notification.destroy({
+      where: {
+        public_user_id: story.public_user_id,
+        title: {
+          [Op.like]: "%Story%",
+        },
+      },
+    });
+  } catch (notifErr) {
+    console.error(
+      `Error deleting story-related notifications for story ${storyId}:`,
+      notifErr
+    );
+  }
+
   // Now delete the story itself
   await story.destroy();
 };
@@ -80,7 +104,7 @@ exports.cleanupExpiredStories = async () => {
     for (const story of expiredStories) {
       try {
         // Use the same deletion logic as deleteStory function
-        await deleteStoryWithRelatedRecords(story);
+        await exports.deleteStoryWithRelatedRecords(story);
         deletedCount++;
       } catch (err) {
         console.error(`Error deleting story ${story.id}:`, err);

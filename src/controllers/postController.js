@@ -86,10 +86,10 @@ exports.createPost = async (req, res) => {
     const post = await models.Post.create(postData);
 
     // Fetch post with user details
-    const postWithUser = await models.Post.findByPk(post.id, {
+    const postWithUser = await PostModel.findByPk(post.id, {
       include: [
         {
-          model: models.PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
         },
@@ -133,11 +133,11 @@ exports.getPostsFeed = async (req, res) => {
       baseConditions.moderation_status = "approved";
     }
 
-    const posts = await models.Post.findAll({
+    const posts = await PostModel.findAll({
       where: baseConditions,
       include: [
         {
-          model: models.PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
         },
@@ -194,7 +194,7 @@ exports.getPostsFeed = async (req, res) => {
       })
     );
 
-    const total = await models.Post.count({ where: baseConditions });
+    const total = await PostModel.count({ where: baseConditions });
 
     return res.json({
       success: true,
@@ -220,50 +220,50 @@ exports.getPost = async (req, res) => {
     const { postId } = req.params;
     const userId = req.publicUserId;
 
-    const post = await models.Post.findByPk(postId, {
+    const post = await PostModel.findByPk(postId, {
       include: [
         {
-          model: models.PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
         },
         {
-          model: models.PostReaction,
+          model: PostReactionModel,
           as: "reactions",
           include: [
             {
-              model: models.PublicUser,
+              model: PublicUserModel,
               as: "user",
               attributes: ["id", "name", "username", "photo"],
             },
           ],
         },
         {
-          model: models.PostComment,
+          model: PostCommentModel,
           as: "comments",
           include: [
             {
-              model: models.PublicUser,
+              model: PublicUserModel,
               as: "user",
               attributes: ["id", "name", "username", "photo"],
             },
             {
-              model: models.PostComment,
+              model: PostCommentModel,
               as: "replies",
               include: [
                 {
-                  model: models.PublicUser,
+                  model: PublicUserModel,
                   as: "user",
                   attributes: ["id", "name", "username", "photo"],
                 },
               ],
             },
             {
-              model: models.CommentReaction,
+              model: CommentReactionModel,
               as: "reactions",
               include: [
                 {
-                  model: models.PublicUser,
+                  model: PublicUserModel,
                   as: "user",
                   attributes: ["id", "name", "username", "photo"],
                 },
@@ -375,11 +375,11 @@ exports.getMyPosts = async (req, res) => {
     const { limit = 20, offset = 0 } = req.query;
     const userId = req.publicUserId;
 
-    const posts = await models.Post.findAll({
+    const posts = await PostModel.findAll({
       where: { public_user_id: userId },
       include: [
         {
-          model: models.PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
         },
@@ -389,7 +389,7 @@ exports.getMyPosts = async (req, res) => {
       offset: parseInt(offset),
     });
 
-    const total = await models.Post.count({
+    const total = await PostModel.count({
       where: { public_user_id: userId },
     });
 
@@ -444,10 +444,10 @@ exports.updatePost = async (req, res) => {
 
     await post.update(updates);
 
-    const updatedPost = await Post.findByPk(postId, {
+    const updatedPost = await PostModel.findByPk(postId, {
       include: [
         {
-          model: PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
         },
@@ -473,6 +473,7 @@ exports.deletePost = async (req, res) => {
   try {
     const { postId } = req.params;
     const userId = req.publicUserId;
+    const fs = require("fs");
 
     const post = await models.Post.findByPk(postId);
 
@@ -489,6 +490,82 @@ exports.deletePost = async (req, res) => {
       });
     }
 
+    // Delete media file from filesystem if it exists
+    if (post.media_url) {
+      const fullPath = path.join(
+        __dirname,
+        "..",
+        "..",
+        "uploads",
+        post.media_url
+      );
+      if (fs.existsSync(fullPath)) {
+        try {
+          fs.unlinkSync(fullPath);
+        } catch (err) {
+          console.error("Error deleting post media file:", err);
+        }
+      }
+    }
+
+    // Delete thumbnail if it exists
+    if (post.thumbnail_url) {
+      const thumbnailPath = path.join(
+        __dirname,
+        "..",
+        "..",
+        "uploads",
+        post.thumbnail_url
+      );
+      if (fs.existsSync(thumbnailPath)) {
+        try {
+          fs.unlinkSync(thumbnailPath);
+        } catch (err) {
+          console.error("Error deleting post thumbnail:", err);
+        }
+      }
+    }
+
+    // Delete related records manually (since database foreign key doesn't have CASCADE)
+    // 1. Delete all comment reactions for comments on this post
+    const comments = await PostCommentModel.findAll({
+      where: { post_id: postId },
+    });
+    const commentIds = comments.map((comment) => comment.id);
+
+    if (commentIds.length > 0) {
+      // Delete all comment reactions
+      await CommentReactionModel.destroy({
+        where: { comment_id: { [Op.in]: commentIds } },
+      });
+    }
+
+    // 2. Delete all comments on this post
+    await PostCommentModel.destroy({
+      where: { post_id: postId },
+    });
+
+    // 3. Delete all reactions on this post
+    await PostReactionModel.destroy({
+      where: { post_id: postId },
+    });
+
+    // 4. Delete all related notifications for the post owner
+    // Delete any notifications that mention posts (reactions, comments, etc.)
+    try {
+      await NotificationModel.destroy({
+        where: {
+          public_user_id: post.public_user_id,
+          title: {
+            [Op.like]: "%Post%",
+          },
+        },
+      });
+    } catch (notifErr) {
+      console.error("Error deleting post-related notifications:", notifErr);
+    }
+
+    // 5. Finally, delete the post itself
     await post.destroy();
 
     return res.json({
@@ -1292,13 +1369,13 @@ exports.getPostsForModeration = async (req, res) => {
   try {
     const { status = "pending", limit = 50, offset = 0 } = req.query;
 
-    const posts = await models.Post.findAll({
+    const posts = await PostModel.findAll({
       where: {
         moderation_status: status,
       },
       include: [
         {
-          model: PublicUser,
+          model: PublicUserModel,
           as: "user",
           attributes: ["id", "name", "username", "photo", "email"],
         },
@@ -1308,7 +1385,7 @@ exports.getPostsForModeration = async (req, res) => {
       offset: parseInt(offset),
     });
 
-    const total = await models.Post.count({
+    const total = await PostModel.count({
       where: { moderation_status: status },
     });
 

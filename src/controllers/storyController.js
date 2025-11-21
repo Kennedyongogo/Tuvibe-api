@@ -547,7 +547,7 @@ exports.deleteStory = async (req, res) => {
 exports.addReaction = async (req, res) => {
   try {
     const { storyId } = req.params;
-    const { reaction_type = "like", emoji } = req.body;
+    const { reaction_type = "like", emoji, emojis } = req.body;
     const userId = req.publicUserId;
 
     const story = await Story.findByPk(storyId, {
@@ -578,22 +578,45 @@ exports.addReaction = async (req, res) => {
       attributes: ["id", "name", "username"],
     });
 
-    // Always create a new reaction (allow multiple reactions per user)
+    // Handle multiple emojis: if emojis array is provided, join them; otherwise use single emoji
+    let emojiString = null;
+    if (emojis && Array.isArray(emojis) && emojis.length > 0) {
+      // Join multiple emojis with comma separator
+      emojiString = emojis.join(",");
+    } else if (emoji) {
+      emojiString = emoji;
+    }
+
+    // Create a single reaction with all emojis
     const reaction = await StoryReaction.create({
       story_id: storyId,
       user_id: userId,
-      reaction_type: emoji ? "emoji" : reaction_type,
-      emoji: emoji || null,
+      reaction_type: emojiString ? "emoji" : reaction_type,
+      emoji: emojiString || null,
     });
 
-    // Update reaction count
+    // Update reaction count - count this as one reaction regardless of number of emojis
     await story.increment("reaction_count");
 
     // Create notification for story owner
     try {
-      const reactionDisplay = emoji || reaction_type;
       const userName =
         reactingUser?.name || reactingUser?.username || "Someone";
+
+      // Format emoji display: show all emojis if multiple, or single emoji
+      let reactionDisplay = reaction_type;
+      if (emojiString) {
+        const emojiArray = emojiString.split(",");
+        if (emojiArray.length > 1) {
+          // Multiple emojis: show them all
+          reactionDisplay = emojiArray.join(" ");
+        } else {
+          // Single emoji
+          reactionDisplay = emojiString;
+        }
+      }
+
+      // Create notification
       await Notification.create({
         public_user_id: story.public_user_id,
         title: "New Reaction on Your Story",
