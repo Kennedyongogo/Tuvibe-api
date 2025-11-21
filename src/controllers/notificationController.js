@@ -49,6 +49,32 @@ exports.markRead = async (req, res) => {
   }
 };
 
+// Delete a single notification (only own notifications)
+exports.delete = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const row = await Notification.findByPk(id);
+    
+    // Security check: ensure notification exists and belongs to the authenticated user
+    if (!row || row.public_user_id !== req.publicUserId) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
+    }
+    
+    await row.destroy();
+    return res.json({ 
+      success: true, 
+      message: "Notification deleted successfully" 
+    });
+  } catch (err) {
+    console.error("notifications delete error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to delete notification" });
+  }
+};
+
 exports.adminCreate = async (req, res) => {
   try {
     const { public_user_id, title, message } = req.body;
