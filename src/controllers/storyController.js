@@ -7,11 +7,48 @@ const {
   StoryHighlight,
   StoryCollection,
   StoryChallenge,
+  StoryMusic,
   PublicUser,
   Notification,
 } = require("../models");
 const path = require("path");
 const storyService = require("../services/storyService");
+const { sendEventToUsers, broadcastToAll } = require("../routes/sseRoutes");
+
+// Simple in-memory cache for stories feed (5 seconds TTL)
+// For production, consider Redis for distributed caching
+const feedCache = new Map();
+const CACHE_TTL = 5000; // 5 seconds
+
+const getCacheKey = (userId, latitude, longitude) => {
+  return `feed:${userId || 'anon'}:${latitude || 'none'}:${longitude || 'none'}`;
+};
+
+const getCachedFeed = (key) => {
+  const cached = feedCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+  feedCache.delete(key);
+  return null;
+};
+
+const setCachedFeed = (key, data) => {
+  feedCache.set(key, {
+    data,
+    timestamp: Date.now()
+  });
+};
+
+// Clean up old cache entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of feedCache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      feedCache.delete(key);
+    }
+  }
+}, CACHE_TTL);
 
 // Helper to calculate expiration date (24 hours from now)
 const getExpirationDate = () => {
@@ -48,6 +85,7 @@ exports.createStory = async (req, res) => {
       scheduled_at,
       metadata,
       background_color,
+      music_id,
     } = req.body;
 
     // Allow text-only stories (no file required if caption is provided)
@@ -116,6 +154,7 @@ exports.createStory = async (req, res) => {
       highlight_id: highlight_id || null,
       collection_id: collection_id || null,
       challenge_id: challenge_id || null,
+      music_id: music_id || null,
       scheduled_at: scheduled_at ? new Date(scheduled_at) : null,
       is_published: scheduled_at ? false : true,
       moderation_status: "pending",
@@ -133,6 +172,21 @@ exports.createStory = async (req, res) => {
       mediaUrl: story.media_url,
       expiresAt: story.expires_at,
     });
+
+    // Clear feed cache for this user (their own story will appear)
+    const cacheKey = getCacheKey(story.public_user_id, null, null);
+    feedCache.delete(cacheKey);
+
+    // Send SSE event to notify user's own feed (for immediate update)
+    try {
+      sendEventToUsers([story.public_user_id], "story:new", {
+        storyId: story.id,
+        userId: story.public_user_id,
+        type: "created"
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for story creation:", err);
+    }
 
     return res.status(201).json({
       success: true,
@@ -156,6 +210,14 @@ exports.getStoriesFeed = async (req, res) => {
   try {
     const { latitude, longitude, radius = 50, limit = 50 } = req.query;
     const userId = req.publicUserId;
+
+    // Check cache first (reduces database load for 10k+ users)
+    const cacheKey = getCacheKey(userId, latitude, longitude);
+    const cached = getCachedFeed(cacheKey);
+    if (cached) {
+      console.log("✅ [Backend] Returning cached feed");
+      return res.json(cached);
+    }
 
     console.log("📋 [Backend] Feed request details:", {
       userId,
@@ -270,6 +332,11 @@ exports.getStoriesFeed = async (req, res) => {
           as: "collection",
           required: false,
         },
+        {
+          model: StoryMusic,
+          as: "music",
+          required: false,
+        },
       ],
       order: [["createdAt", "DESC"]],
       limit: parseInt(limit),
@@ -316,13 +383,18 @@ exports.getStoriesFeed = async (req, res) => {
       userIds: Object.keys(storiesByUser),
     });
 
-    return res.json({
+    const response = {
       success: true,
       data: {
         stories: Object.values(storiesByUser),
         total: formattedStories.length,
       },
-    });
+    };
+
+    // Cache the response (reduces database load for 10k+ users)
+    setCachedFeed(cacheKey, response);
+
+    return res.json(response);
   } catch (err) {
     console.error("💥 [Backend] getStoriesFeed error:", err);
     console.error("💥 [Backend] Error stack:", err.stack);
@@ -402,6 +474,10 @@ exports.getStory = async (req, res) => {
           model: StoryCollection,
           as: "collection",
         },
+        {
+          model: StoryMusic,
+          as: "music",
+        },
       ],
     });
 
@@ -425,6 +501,23 @@ exports.getStory = async (req, res) => {
 
       // Update view count
       await story.increment("view_count");
+      
+      // Reload story to get updated count
+      await story.reload();
+
+      // Broadcast SSE event to all connected users
+      try {
+        console.log("📡 [Backend] Broadcasting story:viewed event", {
+          storyId: story.id,
+          viewCount: story.view_count,
+        });
+        broadcastToAll("story:viewed", {
+          storyId: story.id,
+          viewCount: story.view_count,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for story view:", err);
+      }
     }
 
     // Get user's most recent reaction (for UI display)
@@ -493,6 +586,10 @@ exports.getMyStories = async (req, res) => {
         {
           model: StoryChallenge,
           as: "challenge",
+        },
+        {
+          model: StoryMusic,
+          as: "music",
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -597,6 +694,19 @@ exports.addReaction = async (req, res) => {
 
     // Update reaction count - count this as one reaction regardless of number of emojis
     await story.increment("reaction_count");
+    
+    // Reload story to get updated count
+    await story.reload();
+
+    // Broadcast SSE event to all connected users
+    try {
+      broadcastToAll("story:reacted", {
+        storyId: story.id,
+        reactionCount: story.reaction_count,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for story reaction:", err);
+    }
 
     // Create notification for story owner
     try {
@@ -677,6 +787,17 @@ exports.removeReaction = async (req, res) => {
     const story = await Story.findByPk(storyId);
     if (story) {
       await story.decrement("reaction_count");
+      await story.reload();
+
+      // Broadcast SSE event to all connected users
+      try {
+        broadcastToAll("story:reacted", {
+          storyId: story.id,
+          reactionCount: story.reaction_count,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for story reaction removal:", err);
+      }
     }
 
     return res.json({
@@ -742,6 +863,19 @@ exports.addComment = async (req, res) => {
 
     // Update comment count
     await story.increment("comment_count");
+    
+    // Reload story to get updated count
+    await story.reload();
+
+    // Broadcast SSE event to all connected users
+    try {
+      broadcastToAll("story:commented", {
+        storyId: story.id,
+        commentCount: story.comment_count,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for story comment:", err);
+    }
 
     // Fetch comment with user details
     const commentWithUser = await StoryComment.findByPk(comment.id, {
@@ -810,6 +944,17 @@ exports.deleteComment = async (req, res) => {
     const story = await Story.findByPk(storyId);
     if (story) {
       await story.decrement("comment_count");
+      await story.reload();
+
+      // Broadcast SSE event to all connected users
+      try {
+        broadcastToAll("story:commented", {
+          storyId: story.id,
+          commentCount: story.comment_count,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for story comment deletion:", err);
+      }
     }
 
     return res.json({
@@ -956,6 +1101,11 @@ exports.getNearbyStories = async (req, res) => {
           model: PublicUser,
           as: "user",
           attributes: ["id", "name", "username", "photo", "isVerified"],
+        },
+        {
+          model: StoryMusic,
+          as: "music",
+          required: false,
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -1180,6 +1330,9 @@ exports.approveStory = async (req, res) => {
       is_published: true,
     });
 
+    // Clear all feed caches (story is now visible to all users)
+    feedCache.clear();
+
     // Send notification to user
     if (story.user && story.user.id) {
       const { Notification } = require("../models");
@@ -1191,6 +1344,26 @@ exports.approveStory = async (req, res) => {
         isRead: false,
         data: { story_id: story.id },
       });
+    }
+
+    // Send SSE events to notify users
+    try {
+      // Notify story creator
+      if (story.user?.id) {
+        sendEventToUsers([story.user.id], "story:approved", {
+          storyId: story.id,
+          userId: story.user.id,
+          type: "approved"
+        });
+      }
+      // Broadcast to all connected users so they can see the newly approved story
+      broadcastToAll("story:approved", {
+        storyId: story.id,
+        userId: story.user?.id,
+        type: "approved"
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for story approval:", err);
     }
 
     return res.json({

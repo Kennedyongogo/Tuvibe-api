@@ -31,6 +31,22 @@ const sequelize = new Sequelize(
       min: isProduction ? 2 : 1, // Keep at least 1 connection alive in dev
       acquire: 30000,
       idle: 10000,
+      evict: 1000, // Check for idle connections every second
+    },
+    retry: {
+      max: 3, // Retry up to 3 times
+      match: [
+        /ECONNRESET/,
+        /ETIMEDOUT/,
+        /EHOSTUNREACH/,
+        /ECONNREFUSED/,
+        /SequelizeConnectionError/,
+        /SequelizeConnectionRefusedError/,
+        /SequelizeHostNotFoundError/,
+        /SequelizeHostNotReachableError/,
+        /SequelizeInvalidConnectionError/,
+        /SequelizeConnectionTimedOutError/,
+      ],
     },
     dialectOptions: isProduction
       ? {
@@ -56,25 +72,88 @@ const directSequelize = new Sequelize(
       min: 0,
       acquire: 30000,
       idle: 10000,
+      evict: 1000, // Check for idle connections every second
+    },
+    retry: {
+      max: 3, // Retry up to 3 times
+      match: [
+        /ECONNRESET/,
+        /ETIMEDOUT/,
+        /EHOSTUNREACH/,
+        /ECONNREFUSED/,
+        /SequelizeConnectionError/,
+        /SequelizeConnectionRefusedError/,
+        /SequelizeHostNotFoundError/,
+        /SequelizeHostNotReachableError/,
+        /SequelizeInvalidConnectionError/,
+        /SequelizeConnectionTimedOutError/,
+      ],
     },
     dialectOptions: {},
   }
 );
 
-// Test connections
+// Helper function to retry database operations
+const retryOperation = async (operation, maxRetries = 3, delay = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isConnectionError =
+        error.code === "ECONNRESET" ||
+        error.code === "ETIMEDOUT" ||
+        error.code === "ECONNREFUSED" ||
+        error.name === "SequelizeConnectionError" ||
+        error.name === "SequelizeConnectionRefusedError" ||
+        error.name === "SequelizeHostNotFoundError" ||
+        error.name === "SequelizeConnectionTimedOutError";
+
+      if (isConnectionError && attempt < maxRetries) {
+        console.warn(
+          `⚠️ Connection error (attempt ${attempt}/${maxRetries}): ${error.message}. Retrying in ${delay}ms...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        // Exponential backoff
+        delay *= 2;
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+
+// Test connections with retry logic
 const testConnections = async () => {
   try {
-    await sequelize.authenticate();
-    console.log(
-      `✅ ${
-        isProduction ? "PgBouncer" : "Direct"
-      } connection established successfully.`
-    );
+    await retryOperation(async () => {
+      await sequelize.authenticate();
+      console.log(
+        `✅ ${
+          isProduction ? "PgBouncer" : "Direct"
+        } connection established successfully.`
+      );
+    });
 
-    await directSequelize.authenticate();
-    console.log("✅ Direct database connection established successfully.");
+    await retryOperation(async () => {
+      await directSequelize.authenticate();
+      console.log("✅ Direct database connection established successfully.");
+    });
   } catch (error) {
     console.error("❌ Database connection error:", error);
+    console.error("❌ Connection details:", {
+      host: isProduction
+        ? config.database.pgbouncer.host
+        : config.database.direct.host,
+      port: isProduction
+        ? config.database.pgbouncer.port
+        : config.database.direct.port,
+      database: isProduction
+        ? config.database.pgbouncer.database
+        : config.database.direct.database,
+      username: isProduction
+        ? config.database.pgbouncer.username
+        : config.database.direct.username,
+    });
     throw error;
   }
 };

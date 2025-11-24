@@ -25,6 +25,7 @@ const StoryComment = require("./storyComment")(sequelize);
 const StoryHighlight = require("./storyHighlight")(sequelize);
 const StoryCollection = require("./storyCollection")(sequelize);
 const StoryChallenge = require("./storyChallenge")(sequelize);
+const StoryMusic = require("./storyMusic")(sequelize);
 const Post = require("./post")(sequelize);
 const PostReaction = require("./postReaction")(sequelize);
 const PostComment = require("./postComment")(sequelize);
@@ -54,6 +55,7 @@ const models = {
   StoryHighlight,
   StoryCollection,
   StoryChallenge,
+  StoryMusic,
   Post,
   PostReaction,
   PostComment,
@@ -91,6 +93,119 @@ const ensureProfileBoostTargetAreaColumn = async () => {
       error
     );
     throw error;
+  }
+};
+
+const ensurePostShareCountColumn = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable("posts");
+    if (tableDefinition?.share_count) {
+      console.log("ℹ️ share_count column already exists in posts table");
+      return;
+    }
+    console.log("🔧 Adding share_count column to posts table...");
+    await queryInterface.addColumn("posts", "share_count", {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      field: "share_count",
+    });
+    console.log("✅ share_count column added to posts table");
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ posts table not found yet; share_count will be created during sync."
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists) {
+      console.log("ℹ️ share_count column already exists in posts table");
+      return;
+    }
+    console.error(
+      "⚠️ Failed to add share_count column to posts table:",
+      error
+    );
+    // Don't throw - allow sync to continue
+  }
+};
+
+const ensureStoryMusicIdColumn = async () => {
+  try {
+    // Check if column exists
+    const [columnCheck] = await sequelize.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'stories' 
+      AND column_name = 'music_id'
+    `);
+
+    if (columnCheck.length === 0) {
+      console.log("🔧 Adding music_id column to stories table...");
+      await sequelize.query(`
+        ALTER TABLE stories 
+        ADD COLUMN music_id UUID
+      `);
+      console.log("✅ music_id column added to stories table");
+    } else {
+      console.log("ℹ️ music_id column already exists in stories table");
+    }
+
+    // Check if foreign key constraint exists
+    const [fkCheck] = await sequelize.query(`
+      SELECT constraint_name 
+      FROM information_schema.table_constraints 
+      WHERE table_name = 'stories' 
+      AND constraint_type = 'FOREIGN KEY'
+      AND constraint_name LIKE '%music_id%'
+    `);
+
+    if (fkCheck.length === 0) {
+      console.log("🔧 Adding foreign key constraint for music_id...");
+      await sequelize.query(`
+        ALTER TABLE stories 
+        ADD CONSTRAINT stories_music_id_fkey 
+        FOREIGN KEY (music_id) 
+        REFERENCES story_music(id) 
+        ON DELETE SET NULL 
+        ON UPDATE CASCADE
+      `);
+      console.log("✅ Foreign key constraint added for music_id");
+    } else {
+      console.log("ℹ️ Foreign key constraint for music_id already exists");
+    }
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ stories table not found yet; music_id will be created during sync."
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    const constraintExists =
+      error?.original?.code === "42710" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists || constraintExists) {
+      console.log("ℹ️ music_id column or constraint already exists in stories table");
+      return;
+    }
+    console.error(
+      "⚠️ Failed to add music_id column to stories table:",
+      error
+    );
+    // Don't throw - allow sync to continue
   }
 };
 
@@ -134,43 +249,98 @@ const removeStoryReactionUniqueConstraint = async () => {
   }
 };
 
+// Helper function to retry sync operations
+const retrySync = async (model, modelName, maxRetries = 3, delay = 1000) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await model.sync({ force: false, alter: false });
+      // Small delay between syncs to avoid overwhelming the database
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return;
+    } catch (error) {
+      const isConnectionError =
+        error.code === "ECONNRESET" ||
+        error.code === "ETIMEDOUT" ||
+        error.code === "ECONNREFUSED" ||
+        error.name === "SequelizeConnectionError" ||
+        error.name === "SequelizeConnectionRefusedError" ||
+        error.name === "SequelizeHostNotFoundError" ||
+        error.name === "SequelizeConnectionTimedOutError" ||
+        error.original?.code === "ECONNRESET" ||
+        error.parent?.code === "ECONNRESET";
+
+      if (isConnectionError && attempt < maxRetries) {
+        console.warn(
+          `⚠️ Connection error syncing ${modelName} (attempt ${attempt}/${maxRetries}): ${error.message}. Retrying in ${delay}ms...`
+        );
+        // Verify connection is still alive before retrying
+        try {
+          await sequelize.authenticate();
+        } catch (authError) {
+          console.warn(
+            `⚠️ Connection lost, re-authenticating... (${authError.message})`
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
     console.log("🔄 Creating/updating tables...");
     console.log("📋 Syncing tables...");
 
-    await AdminUser.sync({ force: false, alter: false });
-    await PublicUser.sync({ force: false, alter: false });
+    // Verify database connection before syncing
+    try {
+      await sequelize.authenticate();
+      console.log("✅ Database connection verified");
+    } catch (error) {
+      console.error("❌ Database connection failed:", error.message);
+      throw new Error(
+        `Cannot connect to database: ${error.message}. Please ensure PostgreSQL is running and connection settings are correct.`
+      );
+    }
 
-    await PremiumVerification.sync({ force: false, alter: false });
-    await MarketItem.sync({ force: false, alter: false });
+    await retrySync(AdminUser, "AdminUser");
+    await retrySync(PublicUser, "PublicUser");
 
-    await TokenTransaction.sync({ force: false, alter: false });
-    await ChatUnlock.sync({ force: false, alter: false });
-    await LookingForPost.sync({ force: false, alter: false });
-    await Favourite.sync({ force: false, alter: false });
-    await Payment.sync({ force: false, alter: false });
-    await Notification.sync({ force: false, alter: false });
-    await ProfileView.sync({ force: false, alter: false });
-    await Report.sync({ force: false, alter: false });
+    await retrySync(PremiumVerification, "PremiumVerification");
+    await retrySync(MarketItem, "MarketItem");
+
+    await retrySync(TokenTransaction, "TokenTransaction");
+    await retrySync(ChatUnlock, "ChatUnlock");
+    await retrySync(LookingForPost, "LookingForPost");
+    await retrySync(Favourite, "Favourite");
+    await retrySync(Payment, "Payment");
+    await retrySync(Notification, "Notification");
+    await retrySync(ProfileView, "ProfileView");
+    await retrySync(Report, "Report");
     await ensureProfileBoostTargetAreaColumn();
-    await ProfileBoost.sync({ force: false, alter: false });
-    await ProfileTag.sync({ force: false, alter: false });
-    await AccountSuspension.sync({ force: false, alter: false });
-    await SuspensionMessage.sync({ force: false, alter: false });
-    await StoryHighlight.sync({ force: false, alter: false });
-    await StoryCollection.sync({ force: false, alter: false });
-    await StoryChallenge.sync({ force: false, alter: false });
-    await Story.sync({ force: false, alter: false });
-    await StoryView.sync({ force: false, alter: false });
+    await retrySync(ProfileBoost, "ProfileBoost");
+    await retrySync(ProfileTag, "ProfileTag");
+    await retrySync(AccountSuspension, "AccountSuspension");
+    await retrySync(SuspensionMessage, "SuspensionMessage");
+    await retrySync(StoryHighlight, "StoryHighlight");
+    await retrySync(StoryCollection, "StoryCollection");
+    await retrySync(StoryChallenge, "StoryChallenge");
+    await retrySync(StoryMusic, "StoryMusic");
+    await ensureStoryMusicIdColumn();
+    await retrySync(Story, "Story");
+    await retrySync(StoryView, "StoryView");
     await removeStoryReactionUniqueConstraint();
-    await StoryReaction.sync({ force: false, alter: false });
-    await StoryComment.sync({ force: false, alter: false });
-    await Post.sync({ force: false, alter: false });
-    await PostReaction.sync({ force: false, alter: false });
-    await PostComment.sync({ force: false, alter: false });
-    await CommentReaction.sync({ force: false, alter: false });
+    await retrySync(StoryReaction, "StoryReaction");
+    await retrySync(StoryComment, "StoryComment");
+    await ensurePostShareCountColumn();
+    await retrySync(Post, "Post");
+    await retrySync(PostReaction, "PostReaction");
+    await retrySync(PostComment, "PostComment");
+    await retrySync(CommentReaction, "CommentReaction");
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -178,10 +348,28 @@ const initializeModels = async () => {
     console.error("❌ Error details:", {
       name: error.name,
       message: error.message,
+      code: error.code || error.original?.code || error.parent?.code,
       parent: error.parent?.message,
       original: error.original?.message,
       sql: error.sql,
     });
+
+    // Provide helpful error messages for common issues
+    if (
+      error.code === "ECONNRESET" ||
+      error.original?.code === "ECONNRESET" ||
+      error.parent?.code === "ECONNRESET"
+    ) {
+      console.error(
+        "\n💡 Troubleshooting tips for ECONNRESET:"
+      );
+      console.error("   1. Verify PostgreSQL server is running");
+      console.error("   2. Check database connection settings in .env file");
+      console.error("   3. Verify network connectivity to database host");
+      console.error("   4. Check if database server is overloaded");
+      console.error("   5. Verify firewall rules allow connections");
+    }
+
     throw error;
   }
 };
@@ -522,6 +710,16 @@ const setupAssociations = () => {
     models.Story.belongsTo(models.StoryChallenge, {
       foreignKey: "challenge_id",
       as: "challenge",
+    });
+
+    // StoryMusic associations
+    models.StoryMusic.hasMany(models.Story, {
+      foreignKey: "music_id",
+      as: "stories",
+    });
+    models.Story.belongsTo(models.StoryMusic, {
+      foreignKey: "music_id",
+      as: "music",
     });
 
     // Post associations

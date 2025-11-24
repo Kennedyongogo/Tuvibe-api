@@ -34,6 +34,9 @@ router.delete(
 // Remove most recent reaction (no reactionId)
 router.delete("/:postId/reactions", authenticatePublic, ctrl.removeReaction);
 
+// Share post
+router.post("/:postId/share", optionalPublicAuth, ctrl.sharePost);
+
 // Comments
 router.post("/:postId/comments", authenticatePublic, ctrl.addComment);
 router.delete("/comments/:commentId", authenticatePublic, ctrl.deleteComment);

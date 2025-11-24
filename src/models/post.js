@@ -79,6 +79,11 @@ module.exports = (sequelize) => {
         defaultValue: 0,
         field: "comment_count",
       },
+      share_count: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0,
+        field: "share_count",
+      },
       metadata: {
         type: DataTypes.JSONB,
         allowNull: true,

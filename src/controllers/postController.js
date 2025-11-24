@@ -10,6 +10,7 @@ const {
   Notification,
 } = models;
 const path = require("path");
+const { sendEventToUsers, broadcastToAll } = require("../routes/sseRoutes");
 
 // Ensure we're using the models with associations
 // Access models directly from the require to get the same instances
@@ -177,18 +178,47 @@ exports.getPostsFeed = async (req, res) => {
           postObj.user_reaction = null;
         }
 
-        // Get all emoji reactions (frontend will handle displaying first 3)
+        // Get all emoji reactions - show unique emojis from different users (one per user, most recent)
         const emojiReactions = await PostReaction.findAll({
           where: {
             post_id: post.id,
             emoji: { [Op.not]: null },
             reaction_type: "emoji",
           },
+          include: [
+            {
+              model: PublicUserModel,
+              as: "user",
+              attributes: ["id"],
+            },
+          ],
           order: [["createdAt", "DESC"]],
         });
-        postObj.recent_emoji_reactions = emojiReactions
-          .map((r) => r.emoji)
-          .filter(Boolean);
+        
+        // Extract unique emojis: split comma-separated emojis and get first emoji from each user's most recent reaction
+        const userEmojiMap = new Map(); // Track which emoji we've shown per user
+        const recentEmojis = [];
+        
+        for (const reaction of emojiReactions) {
+          if (!reaction.emoji) continue;
+          
+          const userId = reaction.user?.id || reaction.user_id;
+          
+          // Skip if we already have an emoji from this user
+          if (userEmojiMap.has(userId)) continue;
+          
+          // Split comma-separated emojis and take the first one
+          const firstEmoji = reaction.emoji.split(",")[0].trim();
+          if (firstEmoji) {
+            recentEmojis.push(firstEmoji);
+            userEmojiMap.set(userId, true);
+            
+            // Stop after collecting 3 unique emojis (one per user)
+            if (recentEmojis.length >= 3) break;
+          }
+        }
+        
+        postObj.recent_emoji_reactions = recentEmojis;
 
         return postObj;
       })
@@ -321,18 +351,47 @@ exports.getPost = async (req, res) => {
     const postObj = post.toJSON();
     postObj.user_reaction = userReaction;
 
-    // Get all emoji reactions (frontend will handle displaying first 3)
+    // Get all emoji reactions - show unique emojis from different users (one per user, most recent)
     const emojiReactions = await PostReaction.findAll({
       where: {
         post_id: postId,
         emoji: { [Op.not]: null },
         reaction_type: "emoji",
       },
+      include: [
+        {
+          model: PublicUserModel,
+          as: "user",
+          attributes: ["id"],
+        },
+      ],
       order: [["createdAt", "DESC"]],
     });
-    postObj.recent_emoji_reactions = emojiReactions
-      .map((r) => r.emoji)
-      .filter(Boolean);
+    
+    // Extract unique emojis: split comma-separated emojis and get first emoji from each user's most recent reaction
+    const userEmojiMap = new Map(); // Track which emoji we've shown per user
+    const recentEmojis = [];
+    
+    for (const reaction of emojiReactions) {
+      if (!reaction.emoji) continue;
+      
+      const userId = reaction.user?.id || reaction.user_id;
+      
+      // Skip if we already have an emoji from this user
+      if (userEmojiMap.has(userId)) continue;
+      
+      // Split comma-separated emojis and take the first one
+      const firstoji = reaction.emoji.split(",")[0].trim();
+      if (firstoji) {
+        recentEmojis.push(firstoji);
+        userEmojiMap.set(userId, true);
+        
+        // Stop after collecting 3 unique emojis (one per user)
+        if (recentEmojis.length >= 3) break;
+      }
+    }
+    
+    postObj.recent_emoji_reactions = recentEmojis;
 
     if (userId && postObj.comments) {
       for (const comment of postObj.comments) {
@@ -565,7 +624,19 @@ exports.deletePost = async (req, res) => {
       console.error("Error deleting post-related notifications:", notifErr);
     }
 
-    // 5. Finally, delete the post itself
+    // 5. Broadcast SSE event to all connected users before deleting
+    //    can remove the deleted post from their feed in real-time
+    try {
+      broadcastToAll("post:deleted", {
+        postId: post.id,
+        userId: userId,
+      });
+      console.log("📡 [deletePost] SSE event broadcasted for post deletion:", post.id);
+    } catch (err) {
+      console.error("Failed to send SSE event for post deletion:", err);
+    }
+
+    // 6. Finally, delete the post itself
     await post.destroy();
 
     return res.json({
@@ -585,16 +656,27 @@ exports.deletePost = async (req, res) => {
 exports.addReaction = async (req, res) => {
   try {
     const { postId } = req.params;
-    const { reaction_type = "like", emoji } = req.body;
+    const { reaction_type = "like", emoji, emojis } = req.body;
     const userId = req.publicUserId;
 
     console.log("🔵 [addReaction] Request received:", {
       postId,
       reaction_type,
       emoji,
+      emojis,
       userId,
       timestamp: new Date().toISOString(),
     });
+
+    // Handle multiple emojis: if emojis array is provided, join them; otherwise use single emoji
+    let emojiString = null;
+    if (emojis && Array.isArray(emojis) && emojis.length > 0) {
+      // Join multiple emojis with comma separator (same as stories)
+      emojiString = emojis.join(",");
+      console.log("📝 [addReaction] Multiple emojis received, joined:", emojiString);
+    } else if (emoji) {
+      emojiString = emoji;
+    }
 
     // Fetch post without include to avoid association issues
     // We don't need user data here, just post data
@@ -613,19 +695,17 @@ exports.addReaction = async (req, res) => {
       moderationStatus: post.moderation_status,
     });
 
-    // Check if post is viewable
-    if (
-      post.public_user_id !== userId &&
-      post.moderation_status !== "approved"
-    ) {
-      console.log("❌ [addReaction] Post not viewable:", {
-        postOwnerId: post.public_user_id,
-        userId,
+    // Prevent all interactions on posts that are not approved (including from owner)
+    if (post.moderation_status !== "approved") {
+      console.log("❌ [addReaction] Post not approved - interactions disabled:", {
+        postId: post.id,
         moderationStatus: post.moderation_status,
+        userId,
       });
-      return res
-        .status(403)
-        .json({ success: false, message: "Post not available" });
+      return res.status(403).json({
+        success: false,
+        message: "Cannot interact with post until it is approved",
+      });
     }
 
     // Get the user who is reacting
@@ -722,6 +802,21 @@ exports.addReaction = async (req, res) => {
           postId,
         });
 
+        // Broadcast SSE event to all connected users for real-time updates
+        try {
+          broadcastToAll("post:reacted", {
+            postId: post.id,
+            like_count: likeCount,
+            emoji_reaction_count: Math.max(0, post.emoji_reaction_count || 0),
+            reaction_count: reactionCount,
+            userId,
+            reactionType: "like",
+            removed: true,
+          });
+        } catch (err) {
+          console.error("Failed to send SSE event for post reaction removal:", err);
+        }
+
         return res.json({
           success: true,
           message: "Like removed",
@@ -742,8 +837,8 @@ exports.addReaction = async (req, res) => {
     console.log("➕ [addReaction] Creating new reaction:", {
       postId,
       userId,
-      reaction_type: emoji ? "emoji" : reaction_type,
-      emoji: emoji || null,
+      reaction_type: emojiString ? "emoji" : reaction_type,
+      emoji: emojiString || null,
     });
 
     let reaction;
@@ -751,8 +846,8 @@ exports.addReaction = async (req, res) => {
       reaction = await PostReactionModel.create({
         post_id: postId,
         user_id: userId,
-        reaction_type: emoji ? "emoji" : reaction_type,
-        emoji: emoji || null,
+        reaction_type: emojiString ? "emoji" : reaction_type,
+        emoji: emojiString || null,
       });
       console.log("✅ [addReaction] Reaction created successfully:", {
         reactionId: reaction.id,
@@ -780,8 +875,8 @@ exports.addReaction = async (req, res) => {
           where: {
             post_id: postId,
             user_id: userId,
-            reaction_type: emoji ? "emoji" : reaction_type,
-            emoji: emoji || null,
+            reaction_type: emojiString ? "emoji" : reaction_type,
+            emoji: emojiString || null,
           },
         });
 
@@ -815,12 +910,17 @@ exports.addReaction = async (req, res) => {
       reaction_count: post.reaction_count,
     });
 
-    if (emoji) {
-      // For emoji reactions, increment emoji_reaction_count and reaction_count
-      await post.increment("emoji_reaction_count");
+    if (emojiString) {
+      // For emoji reactions, count each individual emoji (comma-separated)
+      // Split by comma and count the number of emojis
+      const emojiCount = emojiString.split(",").filter(e => e.trim()).length;
+      
+      // Increment emoji_reaction_count by the number of emojis (not just 1)
+      await post.increment("emoji_reaction_count", { by: emojiCount });
+      // reaction_count still increments by 1 (one reaction record)
       await post.increment("reaction_count");
       console.log(
-        "📈 [addReaction] Incremented emoji_reaction_count and reaction_count"
+        `📈 [addReaction] Incremented emoji_reaction_count by ${emojiCount} (${emojiCount} emojis) and reaction_count by 1`
       );
     } else if (reaction_type === "like") {
       // For likes, increment like_count and reaction_count
@@ -846,9 +946,22 @@ exports.addReaction = async (req, res) => {
     // Create notification for post owner (don't notify for own reactions)
     if (post.public_user_id !== userId) {
       try {
-        const reactionDisplay = emoji || reaction_type;
         const userName =
           reactingUser?.name || reactingUser?.username || "Someone";
+
+        // Format emoji display: show all emojis if multiple, or single emoji
+        let reactionDisplay = reaction_type;
+        if (emojiString) {
+          const emojiArray = emojiString.split(",");
+          if (emojiArray.length > 1) {
+            // Multiple emojis: show them all
+            reactionDisplay = emojiArray.join(" ");
+          } else {
+            // Single emoji
+            reactionDisplay = emojiString;
+          }
+        }
+
         await NotificationModel.create({
           public_user_id: post.public_user_id,
           title: "New Reaction on Your Post",
@@ -882,6 +995,64 @@ exports.addReaction = async (req, res) => {
       userId,
       postId,
     });
+
+    // Broadcast SSE event to all connected users for real-time updates
+    try {
+      await post.reload();
+      
+      // Get recent emoji reactions for the SSE event (same format as feed)
+      const emojiReactionsForSSE = await PostReactionModel.findAll({
+        where: {
+          post_id: post.id,
+          emoji: { [Op.not]: null },
+          reaction_type: "emoji",
+        },
+        include: [
+          {
+            model: PublicUserModel,
+            as: "user",
+            attributes: ["id"],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+      });
+      
+      // Extract unique emojis: split comma-separated emojis and get first emoji from each user's most recent reaction
+      const userEmojiMap = new Map();
+      const recentEmojis = [];
+      
+      for (const reaction of emojiReactionsForSSE) {
+        if (!reaction.emoji) continue;
+        
+        const reactionUserId = reaction.user?.id || reaction.user_id;
+        
+        // Skip if we already have an emoji from this user
+        if (userEmojiMap.has(reactionUserId)) continue;
+        
+        // Split comma-separated emojis and take the first one
+        const firstEmoji = reaction.emoji.split(",")[0].trim();
+        if (firstEmoji) {
+          recentEmojis.push(firstEmoji);
+          userEmojiMap.set(reactionUserId, true);
+          
+          // Stop after collecting 3 unique emojis (one per user)
+          if (recentEmojis.length >= 3) break;
+        }
+      }
+      
+      broadcastToAll("post:reacted", {
+        postId: post.id,
+        like_count: likeCount,
+        emoji_reaction_count: emojiCount,
+        reaction_count: reactionCount,
+        recent_emoji_reactions: recentEmojis,
+        userId,
+        reactionType: emojiString ? "emoji" : reaction_type,
+        emoji: emojiString || null,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for post reaction:", err);
+    }
 
     return res.json({
       success: true,
@@ -939,12 +1110,83 @@ exports.removeReaction = async (req, res) => {
     const post = await models.Post.findByPk(postId);
     if (post) {
       if (hasEmoji || reactionType === "emoji") {
-        await post.decrement("emoji_reaction_count");
+        // Count the number of emojis in the reaction being removed
+        const emojiCount = reaction.emoji 
+          ? reaction.emoji.split(",").filter(e => e.trim()).length 
+          : 1;
+        // Decrement emoji_reaction_count by the number of emojis
+        await post.decrement("emoji_reaction_count", { by: emojiCount });
+        console.log(
+          `📉 [removeReaction] Decremented emoji_reaction_count by ${emojiCount} (removed ${emojiCount} emojis)`
+        );
       } else if (reactionType === "like") {
         await post.decrement("like_count");
       }
       // Also update total reaction count for backward compatibility
       await post.decrement("reaction_count");
+      
+      // Reload post to get updated counts
+      await post.reload();
+      
+      // Broadcast SSE event to all connected users for real-time updates
+      try {
+        const likeCount = Math.max(0, post.like_count || 0);
+        const emojiCount = Math.max(0, post.emoji_reaction_count || 0);
+        const reactionCount = Math.max(0, post.reaction_count || 0);
+        
+        // Get recent emoji reactions for the SSE event (same format as feed)
+        const emojiReactionsForSSE = await PostReactionModel.findAll({
+          where: {
+            post_id: post.id,
+            emoji: { [Op.not]: null },
+            reaction_type: "emoji",
+          },
+          include: [
+            {
+              model: PublicUserModel,
+              as: "user",
+              attributes: ["id"],
+            },
+          ],
+          order: [["createdAt", "DESC"]],
+        });
+        
+        // Extract unique emojis: split comma-separated emojis and get first emoji from each user's most recent reaction
+        const userEmojiMap = new Map();
+        const recentEmojis = [];
+        
+        for (const reaction of emojiReactionsForSSE) {
+          if (!reaction.emoji) continue;
+          
+          const reactionUserId = reaction.user?.id || reaction.user_id;
+          
+          // Skip if we already have an emoji from this user
+          if (userEmojiMap.has(reactionUserId)) continue;
+          
+          // Split comma-separated emojis and take the first one
+          const firstEmoji = reaction.emoji.split(",")[0].trim();
+          if (firstEmoji) {
+            recentEmojis.push(firstEmoji);
+            userEmojiMap.set(reactionUserId, true);
+            
+            // Stop after collecting 3 unique emojis (one per user)
+            if (recentEmojis.length >= 3) break;
+          }
+        }
+        
+        broadcastToAll("post:reacted", {
+          postId: post.id,
+          like_count: likeCount,
+          emoji_reaction_count: emojiCount,
+          reaction_count: reactionCount,
+          recent_emoji_reactions: recentEmojis,
+          userId: req.publicUserId,
+          reactionType: hasEmoji ? "emoji" : reactionType,
+          removed: true,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for post reaction removal:", err);
+      }
     }
 
     return res.json({
@@ -967,10 +1209,27 @@ exports.addComment = async (req, res) => {
     const { content, parent_comment_id } = req.body;
     const userId = req.publicUserId;
 
+    console.log("💬 [addComment] Request received:", {
+      postId,
+      content: content?.substring(0, 50),
+      parent_comment_id,
+      userId,
+      hasContent: !!content,
+      contentLength: content?.length,
+    });
+
     if (!content || !content.trim()) {
+      console.log("❌ [addComment] No content provided");
       return res
         .status(400)
         .json({ success: false, message: "Comment content is required" });
+    }
+
+    if (!userId) {
+      console.log("❌ [addComment] No userId found");
+      return res
+        .status(401)
+        .json({ success: false, message: "User authentication required" });
     }
 
     const post = await models.Post.findByPk(postId, {
@@ -988,14 +1247,12 @@ exports.addComment = async (req, res) => {
         .json({ success: false, message: "Post not found" });
     }
 
-    // Check if post is viewable
-    if (
-      post.public_user_id !== userId &&
-      post.moderation_status !== "approved"
-    ) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Post not available" });
+    // Prevent all interactions on posts that are not approved (including from owner)
+    if (post.moderation_status !== "approved") {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot comment on post until it is approved",
+      });
     }
 
     // Get the user who is commenting
@@ -1012,6 +1269,7 @@ exports.addComment = async (req, res) => {
 
     // Update comment count
     await post.increment("comment_count");
+    await post.reload();
 
     // Fetch comment with user details
     const commentWithUser = await PostComment.findByPk(comment.id, {
@@ -1023,6 +1281,19 @@ exports.addComment = async (req, res) => {
         },
       ],
     });
+
+    // Broadcast SSE event to all connected users for real-time updates
+    try {
+      broadcastToAll("post:commented", {
+        postId: post.id,
+        commentId: comment.id,
+        comment_count: post.comment_count || 0,
+        userId,
+        parent_comment_id: parent_comment_id || null,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for post comment:", err);
+    }
 
     // Create notification for post owner (don't notify for own comments)
     if (post.public_user_id !== userId) {
@@ -1051,9 +1322,15 @@ exports.addComment = async (req, res) => {
     });
   } catch (err) {
     console.error("addComment error:", err);
+    console.error("Error details:", {
+      message: err.message,
+      stack: err.stack,
+      postId: req.params.postId,
+      userId: req.publicUserId,
+    });
     return res.status(500).json({
       success: false,
-      message: "Failed to add comment",
+      message: err.message || "Failed to add comment",
     });
   }
 };
@@ -1081,6 +1358,20 @@ exports.deleteComment = async (req, res) => {
     const post = await models.Post.findByPk(postId);
     if (post) {
       await post.decrement("comment_count");
+      await post.reload();
+      
+      // Broadcast SSE event to all connected users for real-time updates
+      try {
+        broadcastToAll("post:commented", {
+          postId: post.id,
+          commentId: commentId,
+          comment_count: post.comment_count || 0,
+          userId,
+          deleted: true,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for post comment deletion:", err);
+      }
     }
 
     return res.json({
@@ -1144,6 +1435,21 @@ exports.addCommentReaction = async (req, res) => {
 
     // Update reaction count
     await comment.increment("reaction_count");
+    await comment.reload();
+
+    // Broadcast SSE event to all connected users for real-time updates
+    try {
+      broadcastToAll("comment:reacted", {
+        postId: comment.post.id,
+        commentId: comment.id,
+        reaction_count: comment.reaction_count || 0,
+        userId,
+        reactionType: emoji ? "emoji" : reaction_type,
+        emoji: emoji || null,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for comment reaction:", err);
+    }
 
     // Create notification for comment owner (don't notify for own reactions)
     if (comment.user_id !== userId) {
@@ -1212,9 +1518,31 @@ exports.removeCommentReaction = async (req, res) => {
     await reaction.destroy();
 
     // Update reaction count
-    const comment = await PostComment.findByPk(commentId);
+    const comment = await PostComment.findByPk(commentId, {
+      include: [
+        {
+          model: Post,
+          as: "post",
+          attributes: ["id"],
+        },
+      ],
+    });
     if (comment) {
       await comment.decrement("reaction_count");
+      await comment.reload();
+      
+      // Broadcast SSE event to all connected users for real-time updates
+      try {
+        broadcastToAll("comment:reacted", {
+          postId: comment.post.id,
+          commentId: comment.id,
+          reaction_count: comment.reaction_count || 0,
+          userId: req.publicUserId,
+          removed: true,
+        });
+      } catch (err) {
+        console.error("Failed to send SSE event for comment reaction removal:", err);
+      }
     }
 
     return res.json({
@@ -1278,6 +1606,21 @@ exports.addCommentReaction = async (req, res) => {
 
     // Update reaction count
     await comment.increment("reaction_count");
+    await comment.reload();
+
+    // Broadcast SSE event to all connected users for real-time updates
+    try {
+      broadcastToAll("comment:reacted", {
+        postId: comment.post.id,
+        commentId: comment.id,
+        reaction_count: comment.reaction_count || 0,
+        userId,
+        reactionType: emoji ? "emoji" : reaction_type,
+        emoji: emoji || null,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for comment reaction:", err);
+    }
 
     // Create notification for comment owner (don't notify for own reactions)
     if (comment.user_id !== userId) {
@@ -1412,7 +1755,15 @@ exports.approvePost = async (req, res) => {
   try {
     const { postId } = req.params;
 
-    const post = await models.Post.findByPk(postId);
+    const post = await models.Post.findByPk(postId, {
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "username", "photo", "isVerified"],
+        },
+      ],
+    });
     if (!post) {
       return res
         .status(404)
@@ -1420,6 +1771,125 @@ exports.approvePost = async (req, res) => {
     }
 
     await post.update({ moderation_status: "approved" });
+    await post.reload({
+      include: [
+        {
+          model: PublicUser,
+          as: "user",
+          attributes: ["id", "name", "username", "photo", "isVerified"],
+        },
+      ],
+    });
+
+    // Send notification to post creator
+    if (post.public_user_id) {
+      try {
+        await NotificationModel.create({
+          public_user_id: post.public_user_id,
+          type: "post_approved",
+          title: "Post Approved",
+          message: "Your post has been approved and is now visible to others.",
+          isRead: false,
+          data: { post_id: post.id },
+        });
+      } catch (notifErr) {
+        console.error("Failed to create post approval notification:", notifErr);
+      }
+    }
+
+    // Broadcast SSE event to all connected users so they can see the newly approved post
+    try {
+      // Get emoji reactions for the post (formatted same as feed)
+      const emojiReactions = await PostReactionModel.findAll({
+        where: {
+          post_id: post.id,
+          emoji: { [Op.not]: null },
+          reaction_type: "emoji",
+        },
+        include: [
+          {
+            model: PublicUserModel,
+            as: "user",
+            attributes: ["id"],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+      });
+      
+      // Extract unique emojis: split comma-separated emojis and get first emoji from each user's most recent reaction
+      const userEmojiMap = new Map(); // Track which emoji we've shown per user
+      const recentEmojis = [];
+      
+      for (const reaction of emojiReactions) {
+        if (!reaction.emoji) continue;
+        
+        const reactionUserId = reaction.user?.id || reaction.user_id;
+        
+        // Skip if we already have an emoji from this user
+        if (userEmojiMap.has(reactionUserId)) continue;
+        
+        // Split comma-separated emojis and take the first one
+        const firstEmoji = reaction.emoji.split(",")[0].trim();
+        if (firstEmoji) {
+          recentEmojis.push(firstEmoji);
+          userEmojiMap.set(reactionUserId, true);
+          
+          // Stop after collecting 3 unique emojis (one per user)
+          if (recentEmojis.length >= 3) break;
+        }
+      }
+
+      // Format post data for SSE (exactly like feed format)
+      const postData = {
+        id: post.id,
+        caption: post.caption,
+        media_url: post.media_url,
+        media_type: post.media_type,
+        location: post.location,
+        moderation_status: post.moderation_status,
+        is_published: post.is_published,
+        like_count: post.like_count || 0,
+        emoji_reaction_count: post.emoji_reaction_count || 0,
+        reaction_count: post.reaction_count || 0,
+        comment_count: post.comment_count || 0,
+        recent_emoji_reactions: recentEmojis,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt,
+        public_user_id: post.public_user_id,
+        user: post.user ? {
+          id: post.user.id,
+          name: post.user.name,
+          username: post.user.username,
+          photo: post.user.photo,
+          isVerified: post.user.isVerified,
+        } : null,
+        user_reaction: null, // Each user will get their own when they view it
+      };
+
+      console.log("📡 [approvePost] Broadcasting post:approved SSE event:", {
+        postId: post.id,
+        hasPostData: !!postData,
+        moderationStatus: postData.moderation_status,
+        isPublished: postData.is_published,
+      });
+
+      // Broadcast as post:approved event
+      broadcastToAll("post:approved", {
+        postId: post.id,
+        post: postData,
+        userId: post.public_user_id,
+        type: "approved",
+      });
+
+      // Also broadcast as post:new for compatibility (frontend handles both)
+      // This ensures the post appears in feeds even if post:approved handler has issues
+      broadcastToAll("post:new", {
+        post: postData,
+        postId: post.id,
+      });
+    } catch (err) {
+      console.error("Failed to send SSE event for post approval:", err);
+    }
 
     return res.json({
       success: true,
@@ -1459,6 +1929,61 @@ exports.rejectPost = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to reject post",
+    });
+  }
+};
+
+// Share post
+exports.sharePost = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const { share_type } = req.body; // 'link', 'native', 'twitter', 'facebook', 'whatsapp', etc.
+
+    const post = await PostModel.findByPk(postId);
+    if (!post) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Post not found" });
+    }
+
+    // Check if user can view post (own post or approved)
+    if (
+      post.public_user_id !== req.publicUserId &&
+      post.moderation_status !== "approved"
+    ) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Post not available" });
+    }
+
+    // Increment share count
+    await post.increment("share_count");
+
+    // Fetch updated post
+    const updatedPost = await PostModel.findByPk(postId, {
+      attributes: ["id", "share_count"],
+    });
+
+    // Broadcast share event via SSE
+    broadcastToAll({
+      type: "post:shared",
+      postId: post.id,
+      share_count: updatedPost.share_count,
+    });
+
+    return res.json({
+      success: true,
+      message: "Post shared successfully",
+      data: {
+        share_count: updatedPost.share_count,
+        share_type: share_type || "link",
+      },
+    });
+  } catch (err) {
+    console.error("sharePost error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to share post",
     });
   }
 };

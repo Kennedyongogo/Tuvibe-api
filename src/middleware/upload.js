@@ -41,6 +41,16 @@ const storage = multer.diskStorage({
       file.fieldname === "post_video"
     ) {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "posts");
+    } else if (
+      file.fieldname === "audio_file" ||
+      file.fieldname === "music_audio"
+    ) {
+      uploadPath = path.join(__dirname, "..", "..", "uploads", "music", "audio");
+    } else if (
+      file.fieldname === "cover_image" ||
+      file.fieldname === "music_cover"
+    ) {
+      uploadPath = path.join(__dirname, "..", "..", "uploads", "music", "covers");
     } else {
       uploadPath = path.join(__dirname, "..", "..", "uploads", "misc");
     }
@@ -84,6 +94,18 @@ const fileFilter = (req, file, cb) => {
     "video/quicktime": ".mov",
     "video/x-msvideo": ".avi",
     "video/webm": ".webm",
+    // Audio
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/ogg": ".ogg",
+    "audio/oga": ".oga",
+    "audio/m4a": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/aac": ".aac",
     // Documents
     "application/pdf": ".pdf",
     "application/msword": ".doc",
@@ -99,8 +121,23 @@ const fileFilter = (req, file, cb) => {
     "text/csv": ".csv",
   };
 
+  // Allow audio files by extension if mimetype check fails (some systems report different mimetypes)
   if (allowedTypes[file.mimetype]) {
     cb(null, true);
+  } else if (file.fieldname === "audio_file" || file.fieldname === "music_audio") {
+    // For audio files, also check by extension
+    const ext = path.extname(file.originalname).toLowerCase();
+    const audioExtensions = [".mp3", ".wav", ".ogg", ".m4a", ".aac", ".oga"];
+    if (audioExtensions.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Invalid audio file type. Allowed extensions: ${audioExtensions.join(", ")}`
+        ),
+        false
+      );
+    }
   } else {
     cb(
       new Error(
@@ -229,6 +266,21 @@ const uploadPostMedia = (req, res, next) => {
   }
 };
 
+// Middleware for music files (audio and cover image)
+const uploadMusicFiles = (req, res, next) => {
+  if (
+    req.headers["content-type"] &&
+    req.headers["content-type"].includes("multipart/form-data")
+  ) {
+    upload.fields([
+      { name: "audio_file", maxCount: 1 },
+      { name: "cover_image", maxCount: 1 },
+    ])(req, res, next);
+  } else {
+    next();
+  }
+};
+
 // Middleware for mixed uploads (multiple fields)
 const uploadMixed = upload.fields([
   { name: "profile_image", maxCount: 1 },
@@ -327,6 +379,7 @@ module.exports = {
   uploadStoryMedia,
   uploadStoryMediaMultiple,
   uploadPostMedia,
+  uploadMusicFiles,
   uploadMixed,
   handleUploadError,
   deleteFile,

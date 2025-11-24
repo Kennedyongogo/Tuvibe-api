@@ -30,6 +30,7 @@ const mlRoutes = require("./routes/mlRoutes");
 const suspensionRoutes = require("./routes/suspensionRoutes");
 const sseRoutes = require("./routes/sseRoutes");
 const storyRoutes = require("./routes/storyRoutes");
+const storyMusicRoutes = require("./routes/storyMusicRoutes");
 const postRoutes = require("./routes/postRoutes");
 const {
   forgotPassword: adminForgotPassword,
@@ -57,6 +58,9 @@ const inquiriesUploadPath = path.join(__dirname, "..", "uploads", "inquiries");
 const marketUploadPath = path.join(__dirname, "..", "uploads", "market");
 const storiesUploadPath = path.join(__dirname, "..", "uploads", "stories");
 const postsUploadPath = path.join(__dirname, "..", "uploads", "posts");
+const musicUploadPath = path.join(__dirname, "..", "uploads", "music");
+const musicAudioPath = path.join(__dirname, "..", "uploads", "music", "audio");
+const musicCoversPath = path.join(__dirname, "..", "uploads", "music", "covers");
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
@@ -108,6 +112,12 @@ console.log(
   "- Exists:",
   fs.existsSync(miscUploadPath)
 );
+console.log(
+  "  - Music:",
+  musicUploadPath,
+  "- Exists:",
+  fs.existsSync(musicUploadPath)
+);
 
 // Serve static files
 app.use("/uploads/profiles", express.static(profilesUploadPath));
@@ -117,6 +127,7 @@ app.use("/uploads/inquiries", express.static(inquiriesUploadPath));
 app.use("/uploads/market", express.static(marketUploadPath));
 app.use("/uploads/stories", express.static(storiesUploadPath));
 app.use("/uploads/posts", express.static(postsUploadPath));
+app.use("/uploads/music", express.static(musicUploadPath));
 app.use("/uploads/misc", express.static(miscUploadPath));
 
 // API routes
@@ -152,6 +163,7 @@ app.use("/api/suspensions", suspensionRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/ml", mlRoutes);
 app.use("/api/sse", sseRoutes.router);
+app.use("/api/stories/music", storyMusicRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/posts", postRoutes);
 console.log("✅ TuVibe routes registered");
@@ -205,6 +217,9 @@ const createUploadDirectories = () => {
     path.join(__dirname, "..", "uploads", "market"),
     path.join(__dirname, "..", "uploads", "stories"),
     path.join(__dirname, "..", "uploads", "posts"),
+    path.join(__dirname, "..", "uploads", "music"),
+    path.join(__dirname, "..", "uploads", "music", "audio"),
+    path.join(__dirname, "..", "uploads", "music", "covers"),
     path.join(__dirname, "..", "uploads", "misc"),
   ];
 

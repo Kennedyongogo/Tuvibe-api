@@ -190,6 +190,42 @@ function sendEventToUsers(userIds, eventType, data) {
 }
 
 /**
+ * Broadcast event to all connected users
+ * @param {string} eventType - The event type
+ * @param {Object} data - The data to send
+ */
+function broadcastToAll(eventType, data) {
+  const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  let sentCount = 0;
+  let errorCount = 0;
+
+  sseConnections.forEach((userConnections, userId) => {
+    userConnections.forEach((res) => {
+      try {
+        res.write(message);
+        sentCount++;
+      } catch (err) {
+        errorCount++;
+        console.error(
+          `[SSE] Error broadcasting to user ${userId}:`,
+          err.message
+        );
+        userConnections.delete(res);
+      }
+    });
+
+    // Clean up empty sets
+    if (userConnections.size === 0) {
+      sseConnections.delete(userId);
+    }
+  });
+
+  console.log(
+    `[SSE] Broadcast "${eventType}" to ${sentCount} connections (${errorCount} errors)`
+  );
+}
+
+/**
  * Get connection count for a user
  * @param {number} userId - The user ID
  * @returns {number} Number of active connections
@@ -212,6 +248,7 @@ module.exports = {
   router,
   sendEventToUser,
   sendEventToUsers,
+  broadcastToAll,
   getUserConnectionCount,
   getTotalConnectionCount,
 };

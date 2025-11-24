@@ -89,6 +89,8 @@ exports.deleteStoryWithRelatedRecords = async (story) => {
 };
 
 // Clean up expired stories
+// Note: When stories are deleted, the music_id reference is removed but the music track
+// itself remains in the database for other users to use in their stories
 exports.cleanupExpiredStories = async () => {
   try {
     const expiredStories = await Story.findAll({
@@ -104,6 +106,8 @@ exports.cleanupExpiredStories = async () => {
     for (const story of expiredStories) {
       try {
         // Use the same deletion logic as deleteStory function
+        // This will delete the story but NOT the music track (music_id is just a reference)
+        // The music track remains available for other users' stories
         await exports.deleteStoryWithRelatedRecords(story);
         deletedCount++;
       } catch (err) {

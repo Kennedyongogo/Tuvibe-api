@@ -86,6 +86,16 @@ module.exports = (sequelize) => {
         },
         field: "challenge_id",
       },
+      music_id: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        references: {
+          model: "story_music",
+          key: "id",
+        },
+        field: "music_id",
+        comment: "Reference to music track used in this story",
+      },
       scheduled_at: {
         type: DataTypes.DATE,
         allowNull: true,
@@ -144,6 +154,9 @@ module.exports = (sequelize) => {
         },
         {
           fields: ["collection_id"],
+        },
+        {
+          fields: ["music_id"],
         },
       ],
     }

@@ -43,10 +43,11 @@ module.exports = (sequelize) => {
         field: "reaction_type",
       },
       emoji: {
-        type: DataTypes.STRING(10),
+        type: DataTypes.TEXT,
         allowNull: true,
         field: "emoji",
-        comment: "Emoji character for emoji reactions",
+        comment:
+          "Emoji character(s) for emoji reactions - can be single emoji or comma-separated multiple emojis",
       },
     },
     {
