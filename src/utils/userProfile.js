@@ -145,6 +145,23 @@ const formatUserForResponse = (userInstance) => {
       ? userInstance.toJSON()
       : { ...userInstance };
 
+  // Ensure photos is always an array (handle JSONB serialization)
+  if (raw.photos !== undefined && raw.photos !== null) {
+    if (typeof raw.photos === "string") {
+      try {
+        raw.photos = JSON.parse(raw.photos);
+      } catch (e) {
+        console.error("Error parsing photos JSONB:", e);
+        raw.photos = [];
+      }
+    }
+    if (!Array.isArray(raw.photos)) {
+      raw.photos = [];
+    }
+  } else {
+    raw.photos = [];
+  }
+
   const computedAge = computeAgeFromBirthYear(raw.birth_year);
   if (computedAge !== null) {
     raw.age = computedAge;

@@ -673,6 +673,81 @@ exports.updateMe = async (req, res) => {
       }
     }
 
+    // Handle setting profile picture from existing gallery photo
+    // Only process if no new file is being uploaded (file upload takes precedence)
+    if (
+      (req.body.photo_path || req.body.set_profile_photo_from_gallery) &&
+      !(req.files && req.files.profile_image && Array.isArray(req.files.profile_image) && req.files.profile_image.length > 0)
+    ) {
+      try {
+        const photoPath = req.body.photo_path || req.body.set_profile_photo_from_gallery;
+        
+        if (!photoPath || typeof photoPath !== "string") {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid photo path provided",
+          });
+        }
+
+        // Fetch user to get their photos array
+        const user = await PublicUser.findByPk(req.publicUserId);
+        if (!user) {
+          return res.status(404).json({
+            success: false,
+            message: "User not found",
+          });
+        }
+
+        // Normalize existing photos to array
+        let existingPhotos = [];
+        if (user.photos) {
+          if (Array.isArray(user.photos)) {
+            existingPhotos = user.photos;
+          } else if (typeof user.photos === "string") {
+            try {
+              existingPhotos = JSON.parse(user.photos);
+              if (!Array.isArray(existingPhotos)) {
+                existingPhotos = [];
+              }
+            } catch (e) {
+              existingPhotos = [];
+            }
+          }
+        }
+
+        // Find the photo in the gallery
+        const galleryPhoto = existingPhotos.find(
+          (photo) => photo && photo.path === photoPath.trim()
+        );
+
+        if (!galleryPhoto) {
+          return res.status(404).json({
+            success: false,
+            message: "Photo not found in your gallery",
+          });
+        }
+
+        // Only allow approved gallery photos to be set as profile picture
+        if (galleryPhoto.moderation_status !== "approved") {
+          return res.status(400).json({
+            success: false,
+            message: "Only approved photos from your gallery can be used as profile picture. This photo is still pending approval or has been rejected.",
+          });
+        }
+
+        // Set the profile picture to the selected approved gallery photo
+        // Since the gallery photo was already approved, the profile picture is automatically approved
+        updates.photo = photoPath.trim();
+        updates.photo_moderation_status = "approved";
+      } catch (galleryPhotoError) {
+        console.error("Error setting profile picture from gallery:", galleryPhotoError);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to set profile picture from gallery",
+        });
+      }
+    }
+
     // Check for email/phone uniqueness if they're being updated
     if (req.body.email) {
       const existingUser = await PublicUser.findOne({
