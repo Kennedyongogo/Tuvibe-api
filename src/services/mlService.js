@@ -463,15 +463,7 @@ class MLService {
               data.categoryStats
             )}`;
           }
-          if (data.allUsers && data.allUsers.length > 0) {
-            contextInfo += `\nMatching users: ${JSON.stringify(
-              data.allUsers.slice(0, 5).map((u) => ({
-                name: u.name,
-                category: u.category,
-                age: u.age,
-              }))
-            )}`;
-          }
+          // Privacy: Do not include individual user details in context
         }
       }
 
@@ -480,9 +472,11 @@ class MLService {
 - General questions about how to use the platform
 - Information about marketplace items, hot deals, weekend picks
 - Posts and what people are looking for
-- User profiles and matching
+- User statistics and aggregate information (NOT individual user details)
 - General knowledge and conversation
 - Any other topic the user wants to discuss
+
+IMPORTANT PRIVACY RULE: Never list individual users with their personal information (name, age, gender, etc.). Only provide aggregate statistics (total users, verified count, category counts). If asked about specific users, redirect them to use the Explore feature in the app.
 
 Be friendly, helpful, and conversational. Answer questions naturally and provide useful information. If the question is about TuVibe platform, use the provided context data when available. For general questions, answer them normally as a helpful assistant would.${contextInfo}`;
 
@@ -624,32 +618,22 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
           // Check what type of user query it is
           const lowerQ = question.toLowerCase();
 
+          // Privacy: Never list individual users with personal information
+          // Only provide aggregate statistics and redirect to Explore feature
+
           // Premium lounge query
           if (lowerQ.includes("premium") || lowerQ.includes("premium lounge")) {
-            const premiumUsers =
-              data.allUsers?.filter(
-                (u) =>
-                  ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"].includes(
-                    u.category
-                  ) && u.isVerified
-              ) || [];
+            const premiumCount = data.categoryStats
+              ? (data.categoryStats["Sugar Mummy"] || 0) +
+                (data.categoryStats["Sponsor"] || 0) +
+                (data.categoryStats["Ben 10"] || 0) +
+                (data.categoryStats["Urban Chics"] || 0)
+              : 0;
 
-            if (premiumUsers.length > 0) {
-              response = `Here are the verified premium users in Premium Lounge:\n\n`;
-              premiumUsers.slice(0, 10).forEach((user) => {
-                response += `• ${user.name}`;
-                if (user.category) response += ` (${user.category})`;
-                if (user.age) response += `, Age: ${user.age}`;
-                response += `\n`;
-              });
-              if (premiumUsers.length > 10) {
-                response += `\n...and ${
-                  premiumUsers.length - 10
-                } more premium users`;
-              }
-            } else {
-              response = `There are currently no verified premium users in the Premium Lounge.`;
-            }
+            response = `Premium Lounge information:\n\n`;
+            response += `• Total verified premium users: ${premiumCount}\n`;
+            response += `• Premium categories include: Sugar Mummy, Sponsor, Ben 10, and Urban Chics\n\n`;
+            response += `To browse premium users, please use the Explore feature in the app where you can filter by category and verification status.`;
           }
           // Category query
           else if (lowerQ.includes("categor") || lowerQ.includes("type")) {
@@ -667,6 +651,7 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
               response += `• Ben 10: Available\n`;
               response += `• Urban Chics: Available\n`;
             }
+            response += `\nTo browse users by category, please use the Explore feature in the app.`;
           }
           // Specific category query
           else if (
@@ -688,25 +673,14 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
                 ? "Urban Chics"
                 : "Regular");
 
-            const categoryUsers =
-              data.allUsers?.filter((u) => u.category === categoryFilter) || [];
+            const categoryCount = data.categoryStats?.[categoryFilter] || 0;
 
-            if (categoryUsers.length > 0) {
-              response = `Here are the ${categoryFilter} users:\n\n`;
-              categoryUsers.slice(0, 10).forEach((user) => {
-                response += `• ${user.name}`;
-                if (user.age) response += `, Age: ${user.age}`;
-                if (user.gender) response += `, ${user.gender}`;
-                if (user.isVerified) response += ` ✓ Verified`;
-                response += `\n`;
-              });
-              if (categoryUsers.length > 10) {
-                response += `\n...and ${
-                  categoryUsers.length - 10
-                } more ${categoryFilter} users`;
-              }
+            if (categoryCount > 0) {
+              response = `${categoryFilter} users on TuVibe:\n\n`;
+              response += `• Total ${categoryFilter} users: ${categoryCount}\n\n`;
+              response += `To browse ${categoryFilter} users, please use the Explore feature in the app where you can filter by category.`;
             } else {
-              response = `There are currently no ${categoryFilter} users registered.`;
+              response = `There are currently ${categoryCount} ${categoryFilter} users registered on TuVibe.`;
             }
           }
           // General user list query
@@ -715,24 +689,23 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
             lowerQ.includes("list users") ||
             lowerQ.includes("show users")
           ) {
-            if (data.allUsers && data.allUsers.length > 0) {
-              response = `Here are the users on TuVibe:\n\n`;
-              response += `• Total users: ${data.totalUsers || 0}\n`;
-              response += `• Verified users: ${data.verifiedUsers || 0}\n\n`;
+            response = `User statistics on TuVibe:\n\n`;
+            response += `• Total users: ${data.totalUsers || 0}\n`;
+            response += `• Verified users: ${data.verifiedUsers || 0}\n\n`;
 
-              response += `Recent users:\n`;
-              data.recentUsers.slice(0, 10).forEach((user) => {
-                response += `• ${user.name}`;
-                if (user.category) response += ` (${user.category})`;
-                if (user.age) response += `, Age: ${user.age}`;
-                if (user.isVerified) response += ` ✓ Verified`;
-                response += `\n`;
-              });
-            } else {
-              response = `Currently, there are ${
-                data.totalUsers || 0
-              } users registered on TuVibe.`;
+            if (
+              data.categoryStats &&
+              Object.keys(data.categoryStats).length > 0
+            ) {
+              response += `Users by category:\n`;
+              Object.entries(data.categoryStats).forEach(
+                ([category, count]) => {
+                  response += `  - ${category}: ${count} users\n`;
+                }
+              );
             }
+
+            response += `\nTo browse and discover users, please use the Explore feature in the app. I can only provide aggregate statistics to protect user privacy.`;
           }
           // Default: Show stats and guidance
           else {
@@ -752,32 +725,25 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
               );
             }
 
-            if (data.recentUsers && data.recentUsers.length > 0) {
-              response += `\nRecent users:\n`;
-              data.recentUsers.slice(0, 5).forEach((user) => {
-                response += `  - ${user.name} (${user.category || "Regular"})`;
-                if (user.isVerified) response += ` ✓`;
-                response += `\n`;
-              });
-            }
-
-            response += `\nYou can ask me:\n`;
-            response += `• "Who are in premium lounge?" - See premium users\n`;
+            response += `\nTo browse users, please use the Explore feature in the app. I can provide statistics, but to protect user privacy, I cannot list individual users.`;
+            response += `\n\nYou can ask me:\n`;
             response += `• "What are the user categories?" - See category breakdown\n`;
-            response += `• "Show me Sugar Mummy users" - See specific category\n`;
-            response += `• "Show me Urban Chics users" - See specific category\n`;
+            response += `• "How many users are there?" - See total user count\n`;
+            response += `• "How many verified users?" - See verified user count\n`;
           }
         } else {
           // No data available, provide general guidance
-          response = `I can help you find users on TuVibe. You can:\n`;
-          response += `• Browse users in Explore\n`;
+          response = `I can help you with user information on TuVibe. You can:\n`;
+          response += `• Get aggregate statistics (total users, verified count, category breakdowns)\n`;
+          response += `• Learn about user categories\n`;
+          response += `\nTo browse and discover individual users, please use the Explore feature in the app where you can:\n`;
           response += `• Search by category (Regular, Sugar Mummy, Sponsor, Ben 10, Urban Chics)\n`;
           response += `• Filter by location, age, and preferences\n`;
           response += `• View premium users in Premium Lounge\n\n`;
           response += `Try asking me:\n`;
-          response += `• "Who are the users?" - See all users\n`;
-          response += `• "Who are in premium lounge?" - See premium users\n`;
+          response += `• "How many users are there?" - See total user count\n`;
           response += `• "What are the user categories?" - See category breakdown\n`;
+          response += `• "How many verified users?" - See verified user count\n`;
         }
         break;
 
@@ -944,52 +910,35 @@ Be friendly, helpful, and conversational. Answer questions naturally and provide
   }
 
   // Get users information using dataService
+  // Privacy: Only return aggregate statistics, never individual user details
   async getUsersInfo(entities = {}) {
     try {
-      const filters = {
-        category: entities.category,
-        gender: entities.gender,
-        searchTerm: entities.searchTerm,
-        limit: entities.premiumLounge ? 50 : 10, // Get more users for premium lounge
-        verified: entities.verified || entities.premiumLounge,
-      };
-
-      // If premium lounge query, filter for premium categories
-      if (entities.premiumLounge) {
-        // Premium lounge includes Sugar Mummy, Sponsor, Ben 10, and Urban Chics
-        // We'll filter after fetching to get all premium users
-        filters.verified = true; // Premium lounge users must be verified
-      }
-
-      if (entities.ageRange) {
-        filters.ageRange = entities.ageRange;
-      }
-
-      let users = await dataService.getUsers(filters);
+      // Only fetch stats, not individual users
       const stats = await dataService.getUsersStats();
 
-      // If premium lounge, filter to only premium categories
-      if (entities.premiumLounge) {
-        users = users.filter(
-          (u) =>
-            ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"].includes(
-              u.category
-            ) && u.isVerified
-        );
+      // If we need category-specific counts, we can calculate from stats
+      let categoryCount = 0;
+      if (entities.category && stats.categoryStats) {
+        categoryCount = stats.categoryStats[entities.category] || 0;
+      }
+
+      // For premium lounge, calculate count from premium categories
+      let premiumCount = 0;
+      if (entities.premiumLounge && stats.categoryStats) {
+        premiumCount =
+          (stats.categoryStats["Sugar Mummy"] || 0) +
+          (stats.categoryStats["Sponsor"] || 0) +
+          (stats.categoryStats["Ben 10"] || 0) +
+          (stats.categoryStats["Urban Chics"] || 0);
       }
 
       return {
         totalUsers: stats.totalUsers,
         verifiedUsers: stats.verifiedUsers,
         categoryStats: stats.categoryStats,
-        recentUsers: users.slice(0, 5).map((user) => ({
-          name: user.name,
-          category: user.category,
-          age: user.age,
-          gender: user.gender,
-          isVerified: user.isVerified,
-        })),
-        allUsers: users, // Include all users for OpenAI context
+        // Privacy: Do not include individual user data
+        categoryCount: categoryCount,
+        premiumCount: premiumCount,
       };
     } catch (error) {
       console.error("Error getting users info:", error);
