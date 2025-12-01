@@ -45,7 +45,9 @@ exports.list = async (req, res) => {
         }
         // Filter photos array to only show approved photos
         if (data.favouritedUser.photos) {
-          data.favouritedUser.photos = filterApprovedPhotos(data.favouritedUser.photos);
+          data.favouritedUser.photos = filterApprovedPhotos(
+            data.favouritedUser.photos
+          );
         }
       }
       return data;
@@ -70,11 +72,20 @@ exports.add = async (req, res) => {
       return res
         .status(400)
         .json({ success: false, message: "Cannot favourite yourself" });
+
+    const currentUser = await PublicUser.findByPk(req.publicUserId);
+    if (!currentUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
     const target = await PublicUser.findByPk(favourite_user_id);
     if (!target)
       return res
         .status(404)
         .json({ success: false, message: "Target user not found" });
+
     const exists = await Favourite.findOne({
       where: { public_user_id: req.publicUserId, favourite_user_id },
     });
@@ -82,6 +93,40 @@ exports.add = async (req, res) => {
       return res
         .status(409)
         .json({ success: false, message: "Already favourited" });
+
+    // Enforce plan limits only for Regular users
+    if (currentUser.category === "Regular") {
+      const {
+        getActiveSubscriptionForUser,
+        REGULAR_PLANS,
+      } = require("../services/subscriptionService");
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan =
+        subscription && REGULAR_PLANS[subscription.plan]
+          ? REGULAR_PLANS[subscription.plan]
+          : null;
+
+      if (!plan) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to add favourites.",
+        });
+      }
+
+      const currentCount = await Favourite.count({
+        where: { public_user_id: req.publicUserId },
+      });
+
+      const maxFavourites = plan.maxFavourites;
+      if (Number.isFinite(maxFavourites) && currentCount >= maxFavourites) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "You have reached the maximum favourites allowed for your plan.",
+        });
+      }
+    }
+
     const row = await Favourite.create({
       public_user_id: req.publicUserId,
       favourite_user_id,

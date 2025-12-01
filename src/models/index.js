@@ -11,6 +11,8 @@ const MarketItem = require("./marketItem")(sequelize);
 const LookingForPost = require("./lookingForPost")(sequelize);
 const Favourite = require("./favourite")(sequelize);
 const Payment = require("./payment")(sequelize);
+const Subscription = require("./subscription")(sequelize);
+const SubscriptionUsage = require("./subscriptionUsage")(sequelize);
 const Notification = require("./notification")(sequelize);
 const ProfileView = require("./profileView")(sequelize);
 const Report = require("./report")(sequelize);
@@ -41,6 +43,9 @@ const models = {
   LookingForPost,
   Favourite,
   Payment,
+  Subscription,
+  SubscriptionUsage,
+  Subscription,
   Notification,
   ProfileView,
   Report,
@@ -129,10 +134,7 @@ const ensurePostShareCountColumn = async () => {
       console.log("ℹ️ share_count column already exists in posts table");
       return;
     }
-    console.error(
-      "⚠️ Failed to add share_count column to posts table:",
-      error
-    );
+    console.error("⚠️ Failed to add share_count column to posts table:", error);
     // Don't throw - allow sync to continue
   }
 };
@@ -198,13 +200,12 @@ const ensureStoryMusicIdColumn = async () => {
       error?.original?.code === "42710" ||
       error?.message?.toLowerCase?.().includes("already exists");
     if (columnExists || constraintExists) {
-      console.log("ℹ️ music_id column or constraint already exists in stories table");
+      console.log(
+        "ℹ️ music_id column or constraint already exists in stories table"
+      );
       return;
     }
-    console.error(
-      "⚠️ Failed to add music_id column to stories table:",
-      error
-    );
+    console.error("⚠️ Failed to add music_id column to stories table:", error);
     // Don't throw - allow sync to continue
   }
 };
@@ -318,6 +319,8 @@ const initializeModels = async () => {
     await retrySync(LookingForPost, "LookingForPost");
     await retrySync(Favourite, "Favourite");
     await retrySync(Payment, "Payment");
+    await retrySync(Subscription, "Subscription");
+    await retrySync(SubscriptionUsage, "SubscriptionUsage");
     await retrySync(Notification, "Notification");
     await retrySync(ProfileView, "ProfileView");
     await retrySync(Report, "Report");
@@ -360,9 +363,7 @@ const initializeModels = async () => {
       error.original?.code === "ECONNRESET" ||
       error.parent?.code === "ECONNRESET"
     ) {
-      console.error(
-        "\n💡 Troubleshooting tips for ECONNRESET:"
-      );
+      console.error("\n💡 Troubleshooting tips for ECONNRESET:");
       console.error("   1. Verify PostgreSQL server is running");
       console.error("   2. Check database connection settings in .env file");
       console.error("   3. Verify network connectivity to database host");
@@ -462,6 +463,26 @@ const setupAssociations = () => {
     models.Payment.belongsTo(models.PublicUser, {
       foreignKey: "public_user_id",
       as: "payer",
+    });
+
+    // PublicUser ↔ Subscription
+    models.PublicUser.hasMany(models.Subscription, {
+      foreignKey: "public_user_id",
+      as: "subscriptions",
+    });
+    models.Subscription.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "subscriber",
+    });
+
+    // PublicUser ↔ SubscriptionUsage
+    models.PublicUser.hasMany(models.SubscriptionUsage, {
+      foreignKey: "public_user_id",
+      as: "subscriptionUsages",
+    });
+    models.SubscriptionUsage.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "usageOwner",
     });
 
     // PublicUser ↔ Notification

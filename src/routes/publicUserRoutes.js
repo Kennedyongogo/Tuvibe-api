@@ -21,6 +21,7 @@ router.post("/forgot-password", ctrl.forgotPassword);
 // Profile
 router.get("/me", authenticatePublic, ctrl.getMe);
 router.post("/logout", authenticatePublic, ctrl.logout);
+router.get("/me/who-viewed", authenticatePublic, ctrl.getWhoViewedMe);
 router.put(
   "/me",
   authenticatePublic,

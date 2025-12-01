@@ -6,6 +6,9 @@ const {
   PREMIUM_CATEGORIES,
   CHAT_COST_RULES_TOKENS,
 } = require("../config/pricing");
+const {
+  useWhatsappContactForRegular,
+} = require("../services/subscriptionService");
 
 const filterApprovedPhotos = (photos) => {
   if (!Array.isArray(photos)) return [];
@@ -146,6 +149,104 @@ exports.unlock = async (req, res) => {
     const isRequesterPremium = premiumCategories.includes(requester.category);
     const isTargetPremium = premiumCategories.includes(target.category);
 
+    // Regular users: subscription-only flow (no tokens)
+    if (requester.category === "Regular") {
+      const {
+        getActiveSubscriptionForUser,
+        REGULAR_PLANS,
+        usePremiumUnlockForRegular,
+      } = require("../services/subscriptionService");
+
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan =
+        subscription && REGULAR_PLANS[subscription.plan]
+          ? REGULAR_PLANS[subscription.plan]
+          : null;
+
+      if (!plan) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to unlock WhatsApp contacts.",
+        });
+      }
+
+      // Enforce overall unlocked profiles capacity for Regular users
+      const currentUnlockedDistinct = await ChatUnlock.count({
+        where: {
+          public_user_id: req.publicUserId,
+          status: "success",
+        },
+        distinct: true,
+        col: "target_user_id",
+      });
+
+      const maxUnlocked = plan.maxUnlockedProfiles;
+      if (
+        Number.isFinite(maxUnlocked) &&
+        currentUnlockedDistinct >= maxUnlocked
+      ) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "You have reached the maximum unlocked profiles allowed for your plan.",
+        });
+      }
+
+      // If target is premium category, enforce premium unlocks per day
+      if (isTargetPremium) {
+        const premiumUsage = await usePremiumUnlockForRegular(req.publicUserId);
+        if (!premiumUsage.subscription) {
+          return res.status(402).json({
+            success: false,
+            message: "Active subscription required to unlock premium profiles.",
+          });
+        }
+        if (!premiumUsage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message:
+              "Daily premium profile unlock limit reached for your plan.",
+          });
+        }
+      }
+
+      const whatsappUsage = await useWhatsappContactForRegular(
+        req.publicUserId
+      );
+
+      if (!whatsappUsage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to unlock WhatsApp contacts.",
+        });
+      }
+
+      if (!whatsappUsage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: "Daily WhatsApp contacts limit reached for your plan.",
+        });
+      }
+
+      await ChatUnlock.create({
+        public_user_id: req.publicUserId,
+        target_user_id,
+        token_cost: 0,
+        status: "success",
+      });
+      const phone = (target.phone || "").replace(/[^\d+]/g, "");
+      const wa = `https://wa.me/${phone.replace(/^\+/, "")}`;
+      return res.json({
+        success: true,
+        data: {
+          phone: target.phone,
+          whatsapp_link: wa,
+          usedSubscription: true,
+        },
+      });
+    }
+
+    // Premium users: keep existing premium rules and token pricing for now
     if (isRequesterPremium && isTargetPremium) {
       // Allow if target is verified (they're from Premium Lounge)
       if (!target.isVerified) {
@@ -160,6 +261,7 @@ exports.unlock = async (req, res) => {
     }
 
     const cost = getChatCostTokens(requester.category, target.category);
+
     try {
       if (cost > 0) {
         await deductTokens(
@@ -178,7 +280,11 @@ exports.unlock = async (req, res) => {
       const wa = `https://wa.me/${phone.replace(/^\+/, "")}`;
       return res.json({
         success: true,
-        data: { phone: target.phone, whatsapp_link: wa },
+        data: {
+          phone: target.phone,
+          whatsapp_link: wa,
+          usedSubscription: false,
+        },
       });
     } catch (err) {
       await ChatUnlock.create({

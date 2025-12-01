@@ -8,6 +8,11 @@ const {
   BOOST_PRICE_TOKENS,
   BOOST_PRICE_KSH,
 } = require("../config/pricing");
+const {
+  useBoostForRegular,
+  REGULAR_PLANS,
+  getActiveSubscriptionForUser,
+} = require("../services/subscriptionService");
 const { normalizeCountyName } = require("../config/kenyaCounties");
 
 const ALLOWED_BOOST_CATEGORIES = [
@@ -220,29 +225,67 @@ exports.boostProfile = async (req, res) => {
       }
     );
 
-    const tokenCost = BASE_BOOST_PRICE_TOKENS * purchasedBlocks;
-    const cashCost = BASE_BOOST_PRICE_KSH * purchasedBlocks;
+    // Regular users: subscription-based boost allowance
+    let tokenCost = 0;
+    let cashCost = 0;
 
-    await deductTokens(
-      req.publicUserId,
-      tokenCost,
-      `Profile boost (${totalHoursPurchased}h)`
-    );
+    if (user.category === "Regular") {
+      const usage = await useBoostForRegular(req.publicUserId);
 
-    // Send SSE event for user update (token balance changed)
-    try {
-      const updatedUser = await PublicUser.findByPk(req.publicUserId, {
-        attributes: { exclude: ["password", "otp"] },
-      });
-      if (updatedUser) {
-        sendEventToUser(
-          req.publicUserId,
-          "user:update",
-          formatUserForResponse(updatedUser)
-        );
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to boost your profile.",
+        });
       }
-    } catch (sseError) {
-      console.error("[SSE] Error sending user:update event:", sseError);
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: "Daily profile boost limit reached for your plan.",
+        });
+      }
+
+      // For Gold, we standardize boosts to 2-hour blocks as per plan
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan = subscription ? REGULAR_PLANS[subscription.plan] : null;
+
+      if (plan && subscription.plan === "Gold") {
+        // Override duration for Gold boosts: 2 hours fixed
+        const goldHours = 2;
+        const goldExtensionMs = goldHours * 3600 * 1000;
+        // Replace extension with fixed Gold duration
+        const newEndsAt = new Date(now.getTime() + goldExtensionMs);
+        // We'll use this below when creating the record
+        // Adjust extensionMs and totalHoursPurchased for response purposes
+        extensionMs = goldExtensionMs;
+      }
+    } else {
+      // Non-regular (premium) users: keep existing token-based behaviour
+      tokenCost = BASE_BOOST_PRICE_TOKENS * purchasedBlocks;
+      cashCost = BASE_BOOST_PRICE_KSH * purchasedBlocks;
+
+      await deductTokens(
+        req.publicUserId,
+        tokenCost,
+        `Profile boost (${totalHoursPurchased}h)`
+      );
+
+      // Send SSE event for user update (token balance changed)
+      try {
+        const updatedUser = await PublicUser.findByPk(req.publicUserId, {
+          attributes: { exclude: ["password", "otp"] },
+        });
+        if (updatedUser) {
+          sendEventToUser(
+            req.publicUserId,
+            "user:update",
+            formatUserForResponse(updatedUser)
+          );
+        }
+      } catch (sseError) {
+        console.error("[SSE] Error sending user:update event:", sseError);
+      }
     }
 
     const boostRecord = await ProfileBoost.create({

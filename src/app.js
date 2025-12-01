@@ -19,6 +19,7 @@ const lookingForPostRoutes = require("./routes/lookingForPostRoutes");
 const favouriteRoutes = require("./routes/favouriteRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const paystackRoutes = require("./routes/paystackRoutes");
+const subscriptionRoutes = require("./routes/subscriptionRoutes");
 const paystackWebhookRoutes = require("./routes/paystackWebhook");
 const notificationRoutes = require("./routes/notificationRoutes");
 const moderationRoutes = require("./routes/moderationRoutes");
@@ -60,7 +61,13 @@ const storiesUploadPath = path.join(__dirname, "..", "uploads", "stories");
 const postsUploadPath = path.join(__dirname, "..", "uploads", "posts");
 const musicUploadPath = path.join(__dirname, "..", "uploads", "music");
 const musicAudioPath = path.join(__dirname, "..", "uploads", "music", "audio");
-const musicCoversPath = path.join(__dirname, "..", "uploads", "music", "covers");
+const musicCoversPath = path.join(
+  __dirname,
+  "..",
+  "uploads",
+  "music",
+  "covers"
+);
 const miscUploadPath = path.join(__dirname, "..", "uploads", "misc");
 
 console.log("📁 Upload Paths:");
@@ -154,6 +161,7 @@ app.use("/api/market", marketItemRoutes);
 app.use("/api/looking-for-posts", lookingForPostRoutes);
 app.use("/api/favourites", favouriteRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/paystack/webhook", paystackWebhookRoutes);
 app.use("/api/paystack", paystackRoutes);
 app.use("/api/notifications", notificationRoutes);

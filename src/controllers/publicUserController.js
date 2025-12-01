@@ -32,6 +32,11 @@ const {
 } = require("../utils/userProfile");
 const { validatePhoneNumber } = require("../utils/phone");
 const { sendEventToUser } = require("../routes/sseRoutes");
+const {
+  useWhoViewedForRegular,
+  getActiveSubscriptionForUser,
+  REGULAR_PLANS,
+} = require("../services/subscriptionService");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -90,6 +95,7 @@ exports.register = async (req, res) => {
       latitude,
       longitude,
       bio,
+      category,
     } = req.body;
     const normalizedUsername =
       typeof username === "string" ? username.trim() : "";
@@ -173,12 +179,25 @@ exports.register = async (req, res) => {
       }
     }
 
+    // Validate and normalize category (optional on signup)
+    const ALLOWED_CATEGORIES = [
+      "Regular",
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
+    const normalizedCategory =
+      typeof category === "string" && ALLOWED_CATEGORIES.includes(category)
+        ? category
+        : "Regular";
+
     // Prepare user data
     const userData = {
       name,
       username: normalizedUsername,
       gender,
-      category: "Regular", // Always set as Regular by default
+      category: normalizedCategory,
       phone: normalizedPhone,
       email,
       password: hashed,
@@ -530,6 +549,97 @@ exports.logout = async (req, res) => {
   }
 };
 
+// Return "who viewed your profile" list, gated by Regular plan allowances
+exports.getWhoViewedMe = async (req, res) => {
+  try {
+    const viewerId = req.publicUserId;
+
+    const currentUser = await PublicUser.findByPk(viewerId);
+    if (!currentUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    if (currentUser.category === "Regular") {
+      const usage = await useWhoViewedForRegular(viewerId);
+
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message:
+            "Active subscription required to see who viewed your profile.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "Daily 'who viewed your profile' limit reached for your plan.",
+        });
+      }
+    }
+
+    const views = await ProfileView.findAll({
+      where: { viewed_id: viewerId },
+      include: [
+        {
+          model: PublicUser,
+          as: "viewer",
+          attributes: [
+            "id",
+            "name",
+            "username",
+            "photo",
+            "photo_moderation_status",
+            "photos",
+            "category",
+            "age",
+            "birth_year",
+            "gender",
+            "bio",
+            "county",
+            "isVerified",
+            "is_online",
+            "last_seen_at",
+          ],
+        },
+      ],
+      order: [["viewed_at", "DESC"]],
+      limit: 50,
+    });
+
+    const formatted = views.map((row) => {
+      const data = row.toJSON();
+      if (data.viewer) {
+        data.viewer = formatUserForPublicResponse(data.viewer);
+        if (data.viewer.photo_moderation_status !== "approved") {
+          data.viewer.photo = null;
+        }
+        if (data.viewer.photos) {
+          data.viewer.photos = filterApprovedPhotos(data.viewer.photos);
+        }
+        if (data.viewer.bio_moderation_status !== "approved") {
+          data.viewer.bio = null;
+        }
+      }
+      return data;
+    });
+
+    return res.json({
+      success: true,
+      data: formatted,
+    });
+  } catch (err) {
+    console.error("getWhoViewedMe error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch profile views",
+    });
+  }
+};
+
 exports.getBoostStatus = async (req, res) => {
   try {
     const now = new Date();
@@ -677,11 +787,17 @@ exports.updateMe = async (req, res) => {
     // Only process if no new file is being uploaded (file upload takes precedence)
     if (
       (req.body.photo_path || req.body.set_profile_photo_from_gallery) &&
-      !(req.files && req.files.profile_image && Array.isArray(req.files.profile_image) && req.files.profile_image.length > 0)
+      !(
+        req.files &&
+        req.files.profile_image &&
+        Array.isArray(req.files.profile_image) &&
+        req.files.profile_image.length > 0
+      )
     ) {
       try {
-        const photoPath = req.body.photo_path || req.body.set_profile_photo_from_gallery;
-        
+        const photoPath =
+          req.body.photo_path || req.body.set_profile_photo_from_gallery;
+
         if (!photoPath || typeof photoPath !== "string") {
           return res.status(400).json({
             success: false,
@@ -731,7 +847,8 @@ exports.updateMe = async (req, res) => {
         if (galleryPhoto.moderation_status !== "approved") {
           return res.status(400).json({
             success: false,
-            message: "Only approved photos from your gallery can be used as profile picture. This photo is still pending approval or has been rejected.",
+            message:
+              "Only approved photos from your gallery can be used as profile picture. This photo is still pending approval or has been rejected.",
           });
         }
 
@@ -740,7 +857,10 @@ exports.updateMe = async (req, res) => {
         updates.photo = photoPath.trim();
         updates.photo_moderation_status = "approved";
       } catch (galleryPhotoError) {
-        console.error("Error setting profile picture from gallery:", galleryPhotoError);
+        console.error(
+          "Error setting profile picture from gallery:",
+          galleryPhotoError
+        );
         return res.status(500).json({
           success: false,
           message: "Failed to set profile picture from gallery",
