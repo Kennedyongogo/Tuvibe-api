@@ -3,7 +3,7 @@ const fetch = (...args) =>
   import("node-fetch").then(({ default: fetchFn }) => fetchFn(...args));
 require("dotenv").config();
 
-const { Subscription } = require("../models");
+const { Subscription, PublicUser } = require("../models");
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_CURRENCY = process.env.PAYSTACK_CURRENCY || "KES";
@@ -19,6 +19,10 @@ if (
 ) {
   throw new Error("PAYSTACK_MINOR_UNIT_FACTOR must be a positive number");
 }
+
+const { useIncognitoMinutesForRegular, useIncognitoMinutesForPremium } = require("../services/subscriptionService");
+const { syncGoldVerificationBadge } = require("../services/goldVerificationService");
+const { syncPremiumBadge, PREMIUM_CATEGORIES } = require("../services/premiumBadgeService");
 
 const buildAuthHeader = () => {
   if (!PAYSTACK_SECRET_KEY) {
@@ -99,6 +103,20 @@ exports.initializeSubscription = async (req, res) => {
         starts_at: now,
         expires_at: expiresAt,
       });
+
+      // Sync badges based on user category and plan
+      const user = await PublicUser.findByPk(req.publicUserId);
+      if (user) {
+        if (user.category === "Regular") {
+          // Regular users: sync gold verification badge for Gold plan
+          if (normalizedPlan === "Gold") {
+            await syncGoldVerificationBadge(user);
+          }
+        } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+          // Premium users: sync premium badge (Silver or Gold)
+          await syncPremiumBadge(user);
+        }
+      }
 
       return res.status(200).json({
         success: true,
@@ -267,6 +285,20 @@ exports.verifySubscription = async (req, res) => {
         starts_at: now,
         expires_at: expiresAt,
       });
+
+      // Sync badges based on user category and plan
+      const user = await PublicUser.findByPk(userId);
+      if (user) {
+        if (user.category === "Regular") {
+          // Regular users: sync gold verification badge for Gold plan
+          if (normalizedPlan === "Gold") {
+            await syncGoldVerificationBadge(user);
+          }
+        } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+          // Premium users: sync premium badge (Silver or Gold)
+          await syncPremiumBadge(user);
+        }
+      }
     } else if (subscription.status !== "active") {
       await subscription.update({
         status: "active",
@@ -275,6 +307,20 @@ exports.verifySubscription = async (req, res) => {
         starts_at: now,
         expires_at: expiresAt,
       });
+
+      // Sync badges based on user category and plan
+      const user = await PublicUser.findByPk(userId);
+      if (user) {
+        if (user.category === "Regular") {
+          // Regular users: sync gold verification badge for Gold plan
+          if (subscription.plan === "Gold") {
+            await syncGoldVerificationBadge(user);
+          }
+        } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+          // Premium users: sync premium badge (Silver or Gold)
+          await syncPremiumBadge(user);
+        }
+      }
     }
 
     return res.status(200).json({
@@ -290,3 +336,116 @@ exports.verifySubscription = async (req, res) => {
     });
   }
 };
+
+exports.startIncognitoSession = async (req, res) => {
+  try {
+    const minutesParam =
+      req.body?.minutes ??
+      req.body?.durationMinutes ??
+      req.body?.requestedMinutes ??
+      null;
+    const requestedMinutes =
+      Number.isFinite(Number(minutesParam)) && Number(minutesParam) > 0
+        ? Number(minutesParam)
+        : null;
+
+    // Check if user is premium category
+    const user = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["category"],
+    });
+
+    let usage;
+    if (user && PREMIUM_CATEGORIES.includes(user.category)) {
+      // Premium category users
+      usage = await useIncognitoMinutesForPremium(
+        req.publicUserId,
+        requestedMinutes
+      );
+    } else {
+      // Regular users
+      usage = await useIncognitoMinutesForRegular(
+        req.publicUserId,
+        requestedMinutes
+      );
+    }
+
+    if (!usage.subscription) {
+      return res.status(402).json({
+        success: false,
+        message: "Active subscription required for incognito mode",
+      });
+    }
+
+    if (!usage.allowed || !usage.consumedMinutes) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Daily incognito allowance exhausted. Try again after 24 hours.",
+      });
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(
+      now.getTime() + usage.consumedMinutes * 60 * 1000
+    );
+
+    await PublicUser.update(
+      { incognito_expires_at: expiresAt },
+      { where: { id: req.publicUserId } }
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        expires_at: expiresAt,
+        consumed_minutes: usage.consumedMinutes,
+        remaining_minutes: usage.remaining,
+        limit_minutes: usage.limit,
+      },
+    });
+  } catch (err) {
+    console.error("startIncognitoSession error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to activate incognito mode",
+    });
+  }
+};
+
+exports.getIncognitoStatus = async (req, res) => {
+  try {
+    const user = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["incognito_expires_at"],
+    });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const now = new Date();
+    const expiresAt =
+      user.incognito_expires_at && new Date(user.incognito_expires_at);
+    const active = expiresAt && expiresAt > now;
+    const remainingMinutes = active
+      ? Math.max(Math.round((expiresAt - now) / 60000), 0)
+      : 0;
+
+    return res.json({
+      success: true,
+      data: {
+        active: Boolean(active),
+        expires_at: expiresAt,
+        remaining_minutes: remainingMinutes,
+      },
+    });
+  } catch (err) {
+    console.error("getIncognitoStatus error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch incognito status",
+    });
+  }
+};
+

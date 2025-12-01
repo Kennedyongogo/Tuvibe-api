@@ -137,6 +137,12 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: "premium_expires_at",
       },
+      incognito_expires_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: "incognito_expires_at",
+        comment: "When incognito mode ends (subscription benefit)",
+      },
     },
     {
       tableName: "public_users",

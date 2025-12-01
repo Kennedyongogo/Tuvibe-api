@@ -25,113 +25,24 @@ const activeBoostUntilOrderLiteral = Sequelize.literal(
   `COALESCE(${activeBoostUntilSubquery}, '1970-01-01'::timestamp)`
 );
 
-// Upgrade from Regular to Premium category - charges tokens and automatically verifies
+// Upgrade from Regular to Premium category - DISABLED
+// Users now select their category during registration
+// This endpoint is kept for backward compatibility but returns an error
 exports.upgradeToPremium = async (req, res) => {
-  try {
-    const { category } = req.body;
-
-    if (!category || !PREMIUM_CATEGORIES.includes(category)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid category. Must be one of: Sugar Mummy, Sponsor, Ben 10, Urban Chics",
-      });
-    }
-
-    // Get current user
-    const user = await PublicUser.findByPk(req.publicUserId);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    // Check if user is already in a premium category
-    if (PREMIUM_CATEGORIES.includes(user.category)) {
-      return res.status(400).json({
-        success: false,
-        message: "User is already in a premium category",
-      });
-    }
-
-    // Check if user is Regular
-    if (user.category !== "Regular") {
-      return res.status(400).json({
-        success: false,
-        message: "Only Regular users can upgrade to premium",
-      });
-    }
-
-    const cost = PREMIUM_UPGRADE_PRICE_TOKENS;
-
-    // Check token balance and deduct tokens
-    try {
-      await deductTokens(
-        req.publicUserId,
-        cost,
-        `Upgrade to ${category} category`
-      );
-    } catch (tokenError) {
-      if (tokenError.code === "INSUFFICIENT_TOKENS") {
-        return res.status(402).json({
-          success: false,
-          message: "Insufficient tokens",
-        });
-      }
-      throw tokenError;
-    }
-
-    // Update user category, set verification, and premium expiry (7 days)
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    user.category = category;
-    user.isVerified = true;
-    user.premium_expires_at = expiresAt;
-    await user.save();
-
-    const updatedUser = await PublicUser.findByPk(req.publicUserId, {
-      attributes: { exclude: ["password", "otp"] },
-    });
-
-    return res.json({
-      success: true,
-      message: `Successfully upgraded to ${category}`,
-      data: {
-        user: updatedUser,
-        cost,
-        costKsh: PREMIUM_UPGRADE_PRICE_KSH,
-        remainingBalance: updatedUser.token_balance,
-        premiumExpiresAt: expiresAt,
-      },
-    });
-  } catch (err) {
-    console.error("upgradeToPremium error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to upgrade to premium" });
-  }
+  return res.status(403).json({
+    success: false,
+    message: "Category upgrade is no longer available. Please select your category during registration. If you need to change your category, please contact support.",
+  });
 };
 
-// Get upgrade costs for premium categories
+// Get upgrade costs for premium categories - DISABLED
+// Category upgrade is no longer available
 exports.getUpgradeCosts = async (req, res) => {
-  try {
-    const categories = PREMIUM_CATEGORIES.map((category) => ({
-      category,
-      costTokens: PREMIUM_UPGRADE_PRICE_TOKENS,
-      costKsh: PREMIUM_UPGRADE_PRICE_KSH,
-      description: `Upgrade to ${category} for exclusive connections`,
-    }));
-
-    return res.json({
-      success: true,
-      data: { categories },
-    });
-  } catch (err) {
-    console.error("getUpgradeCosts error:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to fetch upgrade costs" });
-  }
+  return res.status(403).json({
+    success: false,
+    message: "Category upgrade is no longer available. Please select your category during registration.",
+    data: { categories: [] },
+  });
 };
 
 // Premium Lounge listings by category with cost metadata

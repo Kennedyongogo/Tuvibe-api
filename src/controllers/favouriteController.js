@@ -94,17 +94,24 @@ exports.add = async (req, res) => {
         .status(409)
         .json({ success: false, message: "Already favourited" });
 
-    // Enforce plan limits only for Regular users
-    if (currentUser.category === "Regular") {
+    // Enforce plan limits for Regular and Premium users
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isPremium = PREMIUM_CATEGORIES.includes(currentUser.category);
+
+    if (currentUser.category === "Regular" || isPremium) {
       const {
         getActiveSubscriptionForUser,
         REGULAR_PLANS,
+        PREMIUM_PLANS,
       } = require("../services/subscriptionService");
       const subscription = await getActiveSubscriptionForUser(req.publicUserId);
-      const plan =
-        subscription && REGULAR_PLANS[subscription.plan]
-          ? REGULAR_PLANS[subscription.plan]
-          : null;
+      
+      let plan = null;
+      if (currentUser.category === "Regular") {
+        plan = subscription && REGULAR_PLANS[subscription.plan] ? REGULAR_PLANS[subscription.plan] : null;
+      } else if (isPremium) {
+        plan = subscription && PREMIUM_PLANS[subscription.plan] ? PREMIUM_PLANS[subscription.plan] : null;
+      }
 
       if (!plan) {
         return res.status(402).json({

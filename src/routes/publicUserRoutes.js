@@ -22,6 +22,11 @@ router.post("/forgot-password", ctrl.forgotPassword);
 router.get("/me", authenticatePublic, ctrl.getMe);
 router.post("/logout", authenticatePublic, ctrl.logout);
 router.get("/me/who-viewed", authenticatePublic, ctrl.getWhoViewedMe);
+router.get(
+  "/me/suggested-matches",
+  authenticatePublic,
+  ctrl.getSuggestedMatches
+);
 router.put(
   "/me",
   authenticatePublic,

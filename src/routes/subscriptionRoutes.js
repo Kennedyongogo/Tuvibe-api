@@ -17,4 +17,11 @@ router.post(
 // Verify a Paystack subscription payment by reference
 router.get("/paystack/verify", optionalPublicAuth, ctrl.verifySubscription);
 
+router.post(
+  "/incognito/start",
+  authenticatePublic,
+  ctrl.startIncognitoSession
+);
+router.get("/incognito/status", authenticatePublic, ctrl.getIncognitoStatus);
+
 module.exports = router;

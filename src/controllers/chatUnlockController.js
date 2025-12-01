@@ -155,6 +155,7 @@ exports.unlock = async (req, res) => {
         getActiveSubscriptionForUser,
         REGULAR_PLANS,
         usePremiumUnlockForRegular,
+        useWhatsappContactForRegular,
       } = require("../services/subscriptionService");
 
       const subscription = await getActiveSubscriptionForUser(req.publicUserId);
@@ -246,34 +247,90 @@ exports.unlock = async (req, res) => {
       });
     }
 
-    // Premium users: keep existing premium rules and token pricing for now
-    if (isRequesterPremium && isTargetPremium) {
-      // Allow if target is verified (they're from Premium Lounge)
-      if (!target.isVerified) {
-        return res.status(403).json({
+    // Premium category users: subscription-only flow (no tokens)
+    if (isRequesterPremium) {
+      const {
+        getActiveSubscriptionForUser,
+        PREMIUM_PLANS,
+        usePremiumUnlockForPremium,
+        useWhatsappContactForPremium,
+      } = require("../services/subscriptionService");
+
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan =
+        subscription && PREMIUM_PLANS[subscription.plan]
+          ? PREMIUM_PLANS[subscription.plan]
+          : null;
+
+      if (!plan) {
+        return res.status(402).json({
           success: false,
-          message:
-            "Premium users cannot unlock unverified premium users from explore. Please proceed to Premium Lounge to unlock verified premium users.",
-          requiresPremiumLounge: true,
+          message: "Active subscription required to unlock WhatsApp contacts.",
         });
       }
-      // If target is verified, allow the unlock (they're from Premium Lounge)
-    }
 
-    const cost = getChatCostTokens(requester.category, target.category);
+      // Enforce overall unlocked profiles capacity for Premium users
+      const currentUnlockedDistinct = await ChatUnlock.count({
+        where: {
+          public_user_id: req.publicUserId,
+          status: "success",
+        },
+        distinct: true,
+        col: "target_user_id",
+      });
 
-    try {
-      if (cost > 0) {
-        await deductTokens(
-          req.publicUserId,
-          cost,
-          `WhatsApp unlock: ${target.name}`
-        );
+      const maxUnlocked = plan.maxUnlockedProfiles;
+      if (
+        Number.isFinite(maxUnlocked) &&
+        currentUnlockedDistinct >= maxUnlocked
+      ) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "You have reached the maximum unlocked profiles allowed for your plan.",
+        });
       }
+
+      // If target is premium category, enforce premium unlocks per day
+      if (isTargetPremium) {
+        const premiumUsage = await usePremiumUnlockForPremium(req.publicUserId);
+        if (!premiumUsage.subscription) {
+          return res.status(402).json({
+            success: false,
+            message: "Active subscription required to unlock premium profiles.",
+          });
+        }
+        if (!premiumUsage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message:
+              "Daily premium profile unlock limit reached for your plan.",
+          });
+        }
+      }
+
+      const whatsappUsage = await useWhatsappContactForPremium(
+        req.publicUserId
+      );
+
+      if (!whatsappUsage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to unlock WhatsApp contacts.",
+        });
+      }
+
+      if (!whatsappUsage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: "Daily WhatsApp contacts limit reached for your plan.",
+        });
+      }
+
       await ChatUnlock.create({
         public_user_id: req.publicUserId,
         target_user_id,
-        token_cost: cost,
+        token_cost: 0,
         status: "success",
       });
       const phone = (target.phone || "").replace(/[^\d+]/g, "");
@@ -283,23 +340,17 @@ exports.unlock = async (req, res) => {
         data: {
           phone: target.phone,
           whatsapp_link: wa,
-          usedSubscription: false,
+          usedSubscription: true,
         },
       });
-    } catch (err) {
-      await ChatUnlock.create({
-        public_user_id: req.publicUserId,
-        target_user_id,
-        token_cost: cost,
-        status: "failed",
-      });
-      if (err.code === "INSUFFICIENT_TOKENS") {
-        return res
-          .status(402)
-          .json({ success: false, message: "Insufficient tokens" });
-      }
-      throw err;
     }
+
+    // No token fallback - subscription required for all users
+    // If we reach here, user doesn't have a subscription
+    return res.status(402).json({
+      success: false,
+      message: "Active subscription required to unlock WhatsApp contacts. Please subscribe to a plan to continue.",
+    });
   } catch (err) {
     console.error("unlock error:", err);
     return res

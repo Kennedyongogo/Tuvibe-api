@@ -210,6 +210,94 @@ const ensureStoryMusicIdColumn = async () => {
   }
 };
 
+const ensurePublicUserIncognitoColumn = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable("public_users");
+    if (tableDefinition?.incognito_expires_at) {
+      console.log("ℹ️ incognito_expires_at column already exists on public_users");
+      return;
+    }
+    console.log("🔧 Adding incognito_expires_at column to public_users...");
+    await queryInterface.addColumn("public_users", "incognito_expires_at", {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "incognito_expires_at",
+    });
+    console.log("✅ incognito_expires_at column added to public_users");
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ public_users table missing; incognito_expires_at will be created during sync."
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists) {
+      console.log(
+        "ℹ️ incognito_expires_at column already exists on public_users (race condition)"
+      );
+      return;
+    }
+    console.error(
+      "⚠️ Failed to add incognito_expires_at column to public_users:",
+      error
+    );
+    // Don't throw - allow sync to continue
+  }
+};
+
+const ensureSubscriptionUsageIncognitoColumn = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable(
+      "subscription_usage"
+    );
+    if (tableDefinition?.incognito_minutes_used) {
+      console.log(
+        "ℹ️ incognito_minutes_used column already exists on subscription_usage"
+      );
+      return;
+    }
+    console.log("🔧 Adding incognito_minutes_used column to subscription_usage...");
+    await queryInterface.addColumn("subscription_usage", "incognito_minutes_used", {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+    });
+    console.log("✅ incognito_minutes_used column added to subscription_usage");
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ subscription_usage table missing; incognito_minutes_used will be created during sync."
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists) {
+      console.log(
+        "ℹ️ incognito_minutes_used column already exists on subscription_usage (race condition)"
+      );
+      return;
+    }
+    console.error(
+      "⚠️ Failed to add incognito_minutes_used column to subscription_usage:",
+      error
+    );
+    // Don't throw - allow sync to continue
+  }
+};
+
 const removeStoryReactionUniqueConstraint = async () => {
   try {
     // Check if the unique index exists and drop it
@@ -310,6 +398,7 @@ const initializeModels = async () => {
 
     await retrySync(AdminUser, "AdminUser");
     await retrySync(PublicUser, "PublicUser");
+    await ensurePublicUserIncognitoColumn();
 
     await retrySync(PremiumVerification, "PremiumVerification");
     await retrySync(MarketItem, "MarketItem");
@@ -321,6 +410,7 @@ const initializeModels = async () => {
     await retrySync(Payment, "Payment");
     await retrySync(Subscription, "Subscription");
     await retrySync(SubscriptionUsage, "SubscriptionUsage");
+    await ensureSubscriptionUsageIncognitoColumn();
     await retrySync(Notification, "Notification");
     await retrySync(ProfileView, "ProfileView");
     await retrySync(Report, "Report");
@@ -824,11 +914,56 @@ const setupAssociations = () => {
   }
 };
 
+const syncAllModelsWithOptions = async (options = { force: false, alter: false }) => {
+  const syncOrder = [
+    "AdminUser",
+    "PublicUser",
+    "PremiumVerification",
+    "MarketItem",
+    "TokenTransaction",
+    "ChatUnlock",
+    "LookingForPost",
+    "Favourite",
+    "Payment",
+    "Subscription",
+    "SubscriptionUsage",
+    "Notification",
+    "ProfileView",
+    "Report",
+    "ProfileBoost",
+    "ProfileTag",
+    "AccountSuspension",
+    "SuspensionMessage",
+    "StoryHighlight",
+    "StoryCollection",
+    "StoryChallenge",
+    "StoryMusic",
+    "Story",
+    "StoryView",
+    "StoryReaction",
+    "StoryComment",
+    "Post",
+    "PostReaction",
+    "PostComment",
+    "CommentReaction",
+  ];
+
+  for (const modelName of syncOrder) {
+    const model = models[modelName];
+    if (!model) continue;
+    console.log(
+      `🔁 Syncing ${modelName} with options force=${options.force} alter=${options.alter}`
+    );
+    await model.sync(options);
+  }
+};
+
 // Export models object directly along with spread to ensure associations work
 module.exports = {
   ...models,
   models, // Also export models object directly for association access
   initializeModels,
   setupAssociations,
+  syncAllModelsWithOptions,
   sequelize,
 };

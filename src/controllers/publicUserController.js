@@ -36,7 +36,9 @@ const {
   useWhoViewedForRegular,
   getActiveSubscriptionForUser,
   REGULAR_PLANS,
+  useSuggestedMatchesForRegular,
 } = require("../services/subscriptionService");
+const { syncGoldVerificationBadge } = require("../services/goldVerificationService");
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -514,6 +516,20 @@ exports.getMe = async (req, res) => {
       attributes: { exclude: ["password", "otp"] },
     });
 
+    // Sync badges based on user category
+    if (user) {
+      const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+      if (user.category === "Regular") {
+        const { syncGoldVerificationBadge } = require("../services/goldVerificationService");
+        await syncGoldVerificationBadge(user);
+      } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+        const { syncPremiumBadge } = require("../services/premiumBadgeService");
+        await syncPremiumBadge(user);
+      }
+      // Reload user to get updated isVerified status
+      await user.reload();
+    }
+
     // Note: getMe doesn't emit SSE events since it's just a read operation
     // SSE events are emitted when data actually changes (updateMe, token changes, etc.)
 
@@ -561,8 +577,30 @@ exports.getWhoViewedMe = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isPremium = PREMIUM_CATEGORIES.includes(currentUser.category);
+
     if (currentUser.category === "Regular") {
       const usage = await useWhoViewedForRegular(viewerId);
+
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message:
+            "Active subscription required to see who viewed your profile.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "Daily 'who viewed your profile' limit reached for your plan.",
+        });
+      }
+    } else if (isPremium) {
+      const { useWhoViewedForPremium } = require("../services/subscriptionService");
+      const usage = await useWhoViewedForPremium(viewerId);
 
       if (!usage.subscription) {
         return res.status(402).json({
@@ -636,6 +674,124 @@ exports.getWhoViewedMe = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch profile views",
+    });
+  }
+};
+
+exports.getSuggestedMatches = async (req, res) => {
+  try {
+    const viewerId = req.publicUserId;
+    const viewer = await PublicUser.findByPk(viewerId, {
+      attributes: ["category"],
+    });
+    if (!viewer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    let usage = null;
+    let allowedLimit = Infinity;
+
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isPremium = PREMIUM_CATEGORIES.includes(viewer.category);
+
+    if (viewer.category === "Regular") {
+      usage = await useSuggestedMatchesForRegular(viewerId);
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to get suggested matches.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "Daily suggested matches limit reached for your plan. Try again tomorrow.",
+        });
+      }
+
+      allowedLimit = usage.limit ?? Infinity;
+    } else if (isPremium) {
+      const { useSuggestedMatchesForPremium } = require("../services/subscriptionService");
+      usage = await useSuggestedMatchesForPremium(viewerId);
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to get suggested matches.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "Daily suggested matches limit reached for your plan. Try again tomorrow.",
+        });
+      }
+
+      allowedLimit = usage.limit ?? Infinity;
+    }
+
+    const requestedLimit = Number.parseInt(
+      req.query.limit ?? req.query.count ?? 5,
+      10
+    );
+    const desiredLimit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? requestedLimit
+        : 5;
+    const maxLimit =
+      Number.isFinite(allowedLimit) && allowedLimit > 0
+        ? allowedLimit
+        : desiredLimit;
+    const fetchLimit = Math.max(1, Math.min(desiredLimit, maxLimit, 10));
+
+    const matches = await PublicUser.findAll({
+      where: {
+        id: { [Op.ne]: viewerId },
+      },
+      attributes: {
+        exclude: ["password", "otp", "phone"],
+        include: [
+          [Sequelize.literal(activeBoostUntilSubquery), "active_boost_until"],
+        ],
+      },
+      order: [[Sequelize.literal("random()"), "ASC"]],
+      limit: fetchLimit,
+    });
+
+    const formatted = matches.map((row) => {
+      const data = formatUserForPublicResponse(row);
+      if (data.photo_moderation_status !== "approved") {
+        data.photo = null;
+      }
+      if (data.photos) {
+        data.photos = filterApprovedPhotos(data.photos);
+      }
+      if (data.bio_moderation_status !== "approved") {
+        data.bio = null;
+      }
+      return data;
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        matches: formatted,
+        limit: Number.isFinite(allowedLimit) ? allowedLimit : null,
+        remaining: usage?.remaining ?? null,
+        used_today: usage?.usedCount ?? null,
+        requested: fetchLimit,
+      },
+    });
+  } catch (err) {
+    console.error("getSuggestedMatches error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch suggested matches",
     });
   }
 };
@@ -1390,7 +1546,7 @@ exports.list = async (req, res) => {
         where.username = { [Op.iLike]: `%${q}%` };
       }
     } else {
-      // Get current user to determine their category
+      // Get current user (for excluding from results)
       const currentUser = await PublicUser.findByPk(req.publicUserId, {
         attributes: ["category"],
       });
@@ -1400,11 +1556,6 @@ exports.list = async (req, res) => {
           .status(404)
           .json({ success: false, message: "User not found" });
       }
-
-      const isCurrentUserRegular = currentUser.category === "Regular";
-      const isCurrentUserPremium = premiumCategories.includes(
-        currentUser.category
-      );
 
       // Build base filters (county and online status)
       const baseFilters = {};
@@ -1418,71 +1569,22 @@ exports.list = async (req, res) => {
 
       // Handle category filter
       if (category) {
-        if (premiumCategories.includes(category)) {
-          // Regular users can view premium categories but only verified users
-          if (isCurrentUserRegular) {
-            where.category = category;
-            where.isVerified = true; // Regular users can only see verified premium users
-            // Merge baseFilters (county, online, username) into where
-            Object.assign(where, baseFilters);
-          } else {
-            // Premium users: filtering by premium category shows verified users only
-            where.category = category;
-            where.isVerified = true;
-            // Merge baseFilters (county, online, username) into where
-            Object.assign(where, baseFilters);
-          }
-        } else {
-          // Filtering by Regular: show all Regular users
-          where.category = category;
-          // Merge baseFilters (county, online, username) into where
-          Object.assign(where, baseFilters);
-        }
+        // Show all users in the selected category (no verification filter)
+        where.category = category;
+        // Merge baseFilters (county, online, username) into where
+        Object.assign(where, baseFilters);
       } else {
-        // No category filter
-        if (isCurrentUserRegular) {
-          // Regular users: show Regular AND verified premium users (view only, can't unlock)
-          where[Op.and] = [
-            {
-              [Op.or]: [
-                { category: { [Op.eq]: "Regular" } },
-                {
-                  category: { [Op.in]: premiumCategories },
-                  isVerified: true, // Regular users can only see verified premium users
-                },
-              ],
-            },
-            ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
-          ];
-        } else if (isCurrentUserPremium) {
-          // Premium users (verified or unverified): show Regular AND premium users
-          where[Op.and] = [
-            {
-              [Op.or]: [
-                { category: { [Op.eq]: "Regular" } },
-                {
-                  category: { [Op.in]: premiumCategories },
-                  // Premium users can see both verified and unverified premium users
-                },
-              ],
-            },
-            ...(Object.keys(baseFilters).length > 0 ? [baseFilters] : []),
-          ];
-        } else {
-          // Fallback: if user category is not recognized, just apply baseFilters
+        // No category filter - show ALL registered users regardless of category or verification
+        // Apply baseFilters if any exist
+        if (Object.keys(baseFilters).length > 0) {
           Object.assign(where, baseFilters);
         }
+        // No category restriction - shows all users
       }
 
-      // Handle explicit isVerified filter for registered users
+      // Handle explicit isVerified filter for registered users (only if user explicitly requests it)
       if (isVerified !== undefined) {
-        if (category && premiumCategories.includes(category)) {
-          // Premium category filter already enforces isVerified=true
-          // But if user explicitly wants unverified, they shouldn't see premium users anyway
-          // So ignore the filter if it conflicts
-        } else {
-          where.isVerified = isVerified === "true";
-        }
+        where.isVerified = isVerified === "true";
       }
 
       // Exclude current user from browse results
@@ -1914,6 +2016,34 @@ exports.getById = async (req, res) => {
       });
     }
 
+    // Check if viewed user is premium and has private profile mode enabled
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isViewedUserPremium = PREMIUM_CATEGORIES.includes(user.category);
+    let shouldHideDetails = false;
+
+    if (isViewedUserPremium && req.publicUserId) {
+      // Check if viewed user has active subscription with private profile mode
+      const {
+        getActiveSubscriptionForUser,
+        getPremiumPlanConfig,
+      } = require("../services/subscriptionService");
+      const subscription = await getActiveSubscriptionForUser(user.id);
+      const plan = subscription ? getPremiumPlanConfig(subscription) : null;
+
+      if (plan && plan.hasPrivateProfileMode) {
+        // Check if viewer is premium user
+        const viewer = await PublicUser.findByPk(req.publicUserId, {
+          attributes: ["category"],
+        });
+        const isViewerPremium = viewer && PREMIUM_CATEGORIES.includes(viewer.category);
+        
+        // Hide details from non-premium users
+        if (!isViewerPremium) {
+          shouldHideDetails = true;
+        }
+      }
+    }
+
     // Only show photo if approved
     const safeUser = formatUserForPublicResponse(user);
     if (
@@ -1934,6 +2064,17 @@ exports.getById = async (req, res) => {
       safeUser.bio_moderation_status !== null
     ) {
       safeUser.bio = null;
+    }
+
+    // Apply private profile mode: hide some details from non-premium users
+    if (shouldHideDetails) {
+      // Hide additional photos, bio, age, and other personal details
+      safeUser.photos = [];
+      safeUser.bio = null;
+      safeUser.age = null;
+      safeUser.birth_year = null;
+      safeUser.county = null;
+      // Keep basic info: username, category, isVerified, photo (if approved)
     }
 
     return res.json({
@@ -1974,6 +2115,30 @@ exports.trackProfileView = async (req, res) => {
 
     // Get current date (start of day for cooldown calculation)
     const now = new Date();
+
+    const viewer = await PublicUser.findByPk(viewerId, {
+      attributes: ["incognito_expires_at"],
+    });
+    if (!viewer) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Viewer not found" });
+    }
+
+    const incognitoUntil =
+      viewer.incognito_expires_at && new Date(viewer.incognito_expires_at);
+    if (incognitoUntil && incognitoUntil > now) {
+      return res.json({
+        success: true,
+        data: {
+          counted: false,
+          incognito: true,
+          message:
+            "Incognito mode is active; this view is hidden from the viewer list.",
+        },
+      });
+    }
+
     const todayStart = new Date(
       now.getFullYear(),
       now.getMonth(),

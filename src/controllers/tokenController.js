@@ -201,17 +201,6 @@ exports.boostProfile = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    const requestedBlocks = Number.parseInt(
-      durationHours ?? hours ?? purchaseHours ?? 1,
-      10
-    );
-    const purchasedBlocks =
-      Number.isFinite(requestedBlocks) && requestedBlocks > 0
-        ? Math.min(requestedBlocks, 24)
-        : 1;
-    const totalHoursPurchased = purchasedBlocks * BASE_BOOST_DURATION_HOURS;
-    const extensionMs = totalHoursPurchased * 3600 * 1000;
-
     const now = new Date();
 
     await ProfileBoost.update(
@@ -225,9 +214,14 @@ exports.boostProfile = async (req, res) => {
       }
     );
 
-    // Regular users: subscription-based boost allowance
+    // Regular and Premium users: subscription-based boost allowance (no tokens)
     let tokenCost = 0;
     let cashCost = 0;
+    let extensionMs = 0;
+    let totalHoursPurchased = 0;
+
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isPremium = PREMIUM_CATEGORIES.includes(user.category);
 
     if (user.category === "Regular") {
       const usage = await useBoostForRegular(req.publicUserId);
@@ -246,46 +240,77 @@ exports.boostProfile = async (req, res) => {
         });
       }
 
-      // For Gold, we standardize boosts to 2-hour blocks as per plan
+      // For Gold plan: fixed 2-hour boosts as per subscription plan
       const subscription = await getActiveSubscriptionForUser(req.publicUserId);
       const plan = subscription ? REGULAR_PLANS[subscription.plan] : null;
 
       if (plan && subscription.plan === "Gold") {
-        // Override duration for Gold boosts: 2 hours fixed
+        // Gold plan: fixed 2-hour duration
         const goldHours = 2;
-        const goldExtensionMs = goldHours * 3600 * 1000;
-        // Replace extension with fixed Gold duration
-        const newEndsAt = new Date(now.getTime() + goldExtensionMs);
-        // We'll use this below when creating the record
-        // Adjust extensionMs and totalHoursPurchased for response purposes
-        extensionMs = goldExtensionMs;
+        extensionMs = goldHours * 3600 * 1000;
+        totalHoursPurchased = goldHours;
+        cashCost = 0; // Free for Gold subscribers
+      } else {
+        // Silver plan doesn't have boosts (boostsPerDay: 0)
+        return res.status(403).json({
+          success: false,
+          message: "Profile boosts are not available for your subscription plan.",
+        });
+      }
+    } else if (isPremium) {
+      // Premium category users: subscription-based boost allowance
+      const { useBoostForPremium, PREMIUM_PLANS } = require("../services/subscriptionService");
+      const usage = await useBoostForPremium(req.publicUserId);
+
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to boost your profile.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: "Daily profile boost limit reached for your plan.",
+        });
+      }
+
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan = subscription ? PREMIUM_PLANS[subscription.plan] : null;
+
+      if (plan && subscription.plan === "Silver") {
+        // Silver plan: fixed 1-hour duration, can target one category
+        const silverHours = plan.boostDurationHours || 1;
+        extensionMs = silverHours * 3600 * 1000;
+        totalHoursPurchased = silverHours;
+        cashCost = 0; // Free for Silver subscribers
+        
+        // Silver can only target one category - verify targetCategory is provided
+        if (!targetCategory) {
+          return res.status(400).json({
+            success: false,
+            message: "Target category is required for Silver plan boosts.",
+          });
+        }
+      } else if (plan && subscription.plan === "Gold") {
+        // Gold plan: fixed 3-hour duration, can target all categories
+        const goldHours = plan.boostDurationHours || 3;
+        extensionMs = goldHours * 3600 * 1000;
+        totalHoursPurchased = goldHours;
+        cashCost = 0; // Free for Gold subscribers
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: "Profile boosts are not available for your subscription plan.",
+        });
       }
     } else {
-      // Non-regular (premium) users: keep existing token-based behaviour
-      tokenCost = BASE_BOOST_PRICE_TOKENS * purchasedBlocks;
-      cashCost = BASE_BOOST_PRICE_KSH * purchasedBlocks;
-
-      await deductTokens(
-        req.publicUserId,
-        tokenCost,
-        `Profile boost (${totalHoursPurchased}h)`
-      );
-
-      // Send SSE event for user update (token balance changed)
-      try {
-        const updatedUser = await PublicUser.findByPk(req.publicUserId, {
-          attributes: { exclude: ["password", "otp"] },
-        });
-        if (updatedUser) {
-          sendEventToUser(
-            req.publicUserId,
-            "user:update",
-            formatUserForResponse(updatedUser)
-          );
-        }
-      } catch (sseError) {
-        console.error("[SSE] Error sending user:update event:", sseError);
-      }
+      // No token fallback - subscription required for all users
+      return res.status(402).json({
+        success: false,
+        message: "Active subscription required to boost your profile. Please subscribe to a plan to continue.",
+      });
     }
 
     const boostRecord = await ProfileBoost.create({
@@ -308,8 +333,9 @@ exports.boostProfile = async (req, res) => {
     console.log("[Boost] Created new boost", {
       userId: user.id,
       targetArea: normalizedTargetCounty,
-      purchasedBlocks,
       totalHoursPurchased,
+      category: user.category,
+      subscriptionBased: user.category === "Regular",
     });
 
     return res.json({
@@ -327,6 +353,7 @@ exports.boostProfile = async (req, res) => {
       },
     });
   } catch (err) {
+    // Only handle INSUFFICIENT_TOKENS for premium users (not Regular)
     if (err.code === "INSUFFICIENT_TOKENS") {
       return res
         .status(402)
@@ -342,6 +369,30 @@ exports.boostProfile = async (req, res) => {
 exports.extendProfileBoost = async (req, res) => {
   try {
     const { id } = req.params;
+    const user = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["category"],
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const isRegularOrPremium = user.category === "Regular" || PREMIUM_CATEGORIES.includes(user.category);
+
+    // Regular and Premium users: subscription-only system
+    // They should use their daily boost allowance instead of extending
+    if (isRegularOrPremium) {
+      return res.status(403).json({
+        success: false,
+        message: "Boost extension is not available for subscription users. Please use your daily boost allowance to create a new boost.",
+      });
+    }
+
+    // For other users (if any), keep token-based extension as fallback
     const {
       additionalHours,
       hours,
