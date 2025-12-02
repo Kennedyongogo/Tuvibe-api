@@ -330,13 +330,6 @@ exports.boostProfile = async (req, res) => {
       where: { public_user_id: user.id },
     });
 
-    console.log("[Boost] Created new boost", {
-      userId: user.id,
-      targetArea: normalizedTargetCounty,
-      totalHoursPurchased,
-      category: user.category,
-      subscriptionBased: user.category === "Regular",
-    });
 
     return res.json({
       success: true,
@@ -474,13 +467,6 @@ exports.extendProfileBoost = async (req, res) => {
     boost.ends_at = newEndsAt;
     await boost.save();
 
-    console.log("[Boost] Extended boost", {
-      userId: req.publicUserId,
-      boostId: id,
-      purchasedBlocks,
-      totalHoursPurchased,
-      updatedRadius,
-    });
 
     return res.json({
       success: true,

@@ -81,7 +81,6 @@ exports.getPremiumOverview = async (req, res) => {
     });
   }
 
-  console.log("[PremiumStats] Fetching overview", { userId });
 
   const now = new Date();
 
@@ -203,13 +202,6 @@ exports.getPremiumOverview = async (req, res) => {
       },
     };
 
-    console.log("[PremiumStats] Overview ready", {
-      userId,
-      totals: {
-        views: totalViews,
-        unlocks: totalUnlocks,
-      },
-    });
 
     return res.json(payload);
   } catch (error) {

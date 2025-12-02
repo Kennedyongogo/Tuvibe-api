@@ -1,7 +1,6 @@
-const { DataTypes } = require("sequelize");
 const { sequelize } = require("../config/database");
 
-// Import TuVibe models
+// Import all models
 const AdminUser = require("./adminUser")(sequelize);
 const PublicUser = require("./publicUser")(sequelize);
 const TokenTransaction = require("./tokenTransaction")(sequelize);
@@ -68,97 +67,46 @@ const models = {
   RatingTestimonial,
 };
 
-// Helper function to retry sync operations
-const retrySync = async (model, modelName, maxRetries = 3, delay = 1000) => {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      await model.sync({ force: false, alter: false });
-      // Small delay between syncs to avoid overwhelming the database
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return;
-    } catch (error) {
-      const isConnectionError =
-        error.code === "ECONNRESET" ||
-        error.code === "ETIMEDOUT" ||
-        error.code === "ECONNREFUSED" ||
-        error.name === "SequelizeConnectionError" ||
-        error.name === "SequelizeConnectionRefusedError" ||
-        error.name === "SequelizeHostNotFoundError" ||
-        error.name === "SequelizeConnectionTimedOutError" ||
-        error.original?.code === "ECONNRESET" ||
-        error.parent?.code === "ECONNRESET";
-
-      if (isConnectionError && attempt < maxRetries) {
-        console.warn(
-          `⚠️ Connection error syncing ${modelName} (attempt ${attempt}/${maxRetries}): ${error.message}. Retrying in ${delay}ms...`
-        );
-        // Verify connection is still alive before retrying
-        try {
-          await sequelize.authenticate();
-        } catch (authError) {
-          console.warn(
-            `⚠️ Connection lost, re-authenticating... (${authError.message})`
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        delay *= 2; // Exponential backoff
-        continue;
-      }
-      throw error;
-    }
-  }
-};
-
 // Initialize models in correct order (parent tables first)
 const initializeModels = async () => {
   try {
     console.log("🔄 Creating/updating tables...");
-    console.log("📋 Syncing tables...");
 
-    // Verify database connection before syncing
-    try {
-      await sequelize.authenticate();
-      console.log("✅ Database connection verified");
-    } catch (error) {
-      console.error("❌ Database connection failed:", error.message);
-      throw new Error(
-        `Cannot connect to database: ${error.message}. Please ensure PostgreSQL is running and connection settings are correct.`
-      );
-    }
+    // Use alter: false to prevent schema conflicts in production
+    console.log("📋 Syncing parent tables...");
+    await AdminUser.sync({ force: false, alter: false });
+    await PublicUser.sync({ force: false, alter: false });
 
-    await retrySync(AdminUser, "AdminUser");
-    await retrySync(PublicUser, "PublicUser");
-
-    await retrySync(PremiumVerification, "PremiumVerification");
-    await retrySync(MarketItem, "MarketItem");
-
-    await retrySync(TokenTransaction, "TokenTransaction");
-    await retrySync(ChatUnlock, "ChatUnlock");
-    await retrySync(LookingForPost, "LookingForPost");
-    await retrySync(Favourite, "Favourite");
-    await retrySync(Payment, "Payment");
-    await retrySync(Subscription, "Subscription");
-    await retrySync(SubscriptionUsage, "SubscriptionUsage");
-    await retrySync(Notification, "Notification");
-    await retrySync(ProfileView, "ProfileView");
-    await retrySync(Report, "Report");
-    await retrySync(ProfileBoost, "ProfileBoost");
-    await retrySync(ProfileTag, "ProfileTag");
-    await retrySync(AccountSuspension, "AccountSuspension");
-    await retrySync(SuspensionMessage, "SuspensionMessage");
-    await retrySync(StoryHighlight, "StoryHighlight");
-    await retrySync(StoryCollection, "StoryCollection");
-    await retrySync(StoryChallenge, "StoryChallenge");
-    await retrySync(StoryMusic, "StoryMusic");
-    await retrySync(Story, "Story");
-    await retrySync(StoryView, "StoryView");
-    await retrySync(StoryReaction, "StoryReaction");
-    await retrySync(StoryComment, "StoryComment");
-    await retrySync(Post, "Post");
-    await retrySync(PostReaction, "PostReaction");
-    await retrySync(PostComment, "PostComment");
-    await retrySync(CommentReaction, "CommentReaction");
-    await retrySync(RatingTestimonial, "RatingTestimonial");
+    console.log("📋 Syncing child tables...");
+    await PremiumVerification.sync({ force: false, alter: false });
+    await MarketItem.sync({ force: false, alter: false });
+    await TokenTransaction.sync({ force: false, alter: false });
+    await ChatUnlock.sync({ force: false, alter: false });
+    await LookingForPost.sync({ force: false, alter: false });
+    await Favourite.sync({ force: false, alter: false });
+    await Payment.sync({ force: false, alter: false });
+    await Subscription.sync({ force: false, alter: false });
+    await SubscriptionUsage.sync({ force: false, alter: false });
+    await Notification.sync({ force: false, alter: false });
+    await ProfileView.sync({ force: false, alter: false });
+    await Report.sync({ force: false, alter: false });
+    await ProfileBoost.sync({ force: false, alter: false });
+    await ProfileTag.sync({ force: false, alter: false });
+    await AccountSuspension.sync({ force: false, alter: false });
+    await SuspensionMessage.sync({ force: false, alter: false });
+    await StoryHighlight.sync({ force: false, alter: false });
+    await StoryCollection.sync({ force: false, alter: false });
+    await StoryChallenge.sync({ force: false, alter: false });
+    await StoryMusic.sync({ force: false, alter: false });
+    await Story.sync({ force: false, alter: false });
+    await StoryView.sync({ force: false, alter: false });
+    await StoryReaction.sync({ force: false, alter: false });
+    await StoryComment.sync({ force: false, alter: false });
+    await Post.sync({ force: false, alter: false });
+    await PostReaction.sync({ force: false, alter: false });
+    await PostComment.sync({ force: false, alter: false });
+    await CommentReaction.sync({ force: false, alter: false });
+    await RatingTestimonial.sync({ force: false, alter: false });
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -166,26 +114,10 @@ const initializeModels = async () => {
     console.error("❌ Error details:", {
       name: error.name,
       message: error.message,
-      code: error.code || error.original?.code || error.parent?.code,
       parent: error.parent?.message,
       original: error.original?.message,
       sql: error.sql,
     });
-
-    // Provide helpful error messages for common issues
-    if (
-      error.code === "ECONNRESET" ||
-      error.original?.code === "ECONNRESET" ||
-      error.parent?.code === "ECONNRESET"
-    ) {
-      console.error("\n💡 Troubleshooting tips for ECONNRESET:");
-      console.error("   1. Verify PostgreSQL server is running");
-      console.error("   2. Check database connection settings in .env file");
-      console.error("   3. Verify network connectivity to database host");
-      console.error("   4. Check if database server is overloaded");
-      console.error("   5. Verify firewall rules allow connections");
-    }
-
     throw error;
   }
 };
@@ -649,58 +581,4 @@ const setupAssociations = () => {
   }
 };
 
-const syncAllModelsWithOptions = async (
-  options = { force: false, alter: false }
-) => {
-  const syncOrder = [
-    "AdminUser",
-    "PublicUser",
-    "PremiumVerification",
-    "MarketItem",
-    "TokenTransaction",
-    "ChatUnlock",
-    "LookingForPost",
-    "Favourite",
-    "Payment",
-    "Subscription",
-    "SubscriptionUsage",
-    "Notification",
-    "ProfileView",
-    "Report",
-    "ProfileBoost",
-    "ProfileTag",
-    "AccountSuspension",
-    "SuspensionMessage",
-    "StoryHighlight",
-    "StoryCollection",
-    "StoryChallenge",
-    "StoryMusic",
-    "Story",
-    "StoryView",
-    "StoryReaction",
-    "StoryComment",
-    "Post",
-    "PostReaction",
-    "PostComment",
-    "CommentReaction",
-  ];
-
-  for (const modelName of syncOrder) {
-    const model = models[modelName];
-    if (!model) continue;
-    console.log(
-      `🔁 Syncing ${modelName} with options force=${options.force} alter=${options.alter}`
-    );
-    await model.sync(options);
-  }
-};
-
-// Export models object directly along with spread to ensure associations work
-module.exports = {
-  ...models,
-  models, // Also export models object directly for association access
-  initializeModels,
-  setupAssociations,
-  syncAllModelsWithOptions,
-  sequelize,
-};
+module.exports = { ...models, initializeModels, setupAssociations, sequelize };

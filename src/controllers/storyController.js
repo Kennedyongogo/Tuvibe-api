@@ -59,19 +59,6 @@ const getExpirationDate = () => {
 
 // Create a new story
 exports.createStory = async (req, res) => {
-  console.log("📥 [Backend] Story creation request received");
-  console.log("📋 [Backend] Request details:", {
-    userId: req.publicUserId,
-    hasFile: !!req.file,
-    fileInfo: req.file
-      ? {
-          filename: req.file.filename,
-          mimetype: req.file.mimetype,
-          size: req.file.size,
-        }
-      : null,
-    body: req.body,
-  });
 
   try {
     const {
@@ -92,7 +79,6 @@ exports.createStory = async (req, res) => {
     const isTextOnly = !req.file && caption && caption.trim();
 
     if (!req.file && !isTextOnly) {
-      console.log("❌ [Backend] No file uploaded and no text provided");
       return res.status(400).json({
         success: false,
         message:
@@ -109,13 +95,6 @@ exports.createStory = async (req, res) => {
       mediaType = isVideo ? "video" : "photo";
       mediaUrl = `stories/${req.file.filename}`;
 
-      console.log("🎬 [Backend] Media type determined:", {
-        isVideo,
-        mediaType,
-        mediaUrl,
-      });
-    } else {
-      console.log("📝 [Backend] Text-only story detected");
     }
 
     // Calculate expiration
@@ -123,7 +102,6 @@ exports.createStory = async (req, res) => {
       ? new Date(new Date(scheduled_at).getTime() + 24 * 60 * 60 * 1000)
       : getExpirationDate();
 
-    console.log("⏰ [Backend] Expiration date:", expiresAt);
 
     // Prepare metadata with background color for text stories
     let storyMetadata = {};
@@ -161,17 +139,7 @@ exports.createStory = async (req, res) => {
       metadata: storyMetadata,
     };
 
-    console.log("💾 [Backend] Story data prepared:", storyData);
-    console.log("🔄 [Backend] Creating story in database...");
-
     const story = await Story.create(storyData);
-
-    console.log("✅ [Backend] Story created successfully!", {
-      storyId: story.id,
-      userId: story.public_user_id,
-      mediaUrl: story.media_url,
-      expiresAt: story.expires_at,
-    });
 
     // Clear feed cache for this user (their own story will appear)
     const cacheKey = getCacheKey(story.public_user_id, null, null);
@@ -206,7 +174,6 @@ exports.createStory = async (req, res) => {
 
 // Get stories feed (stories from users you follow or nearby)
 exports.getStoriesFeed = async (req, res) => {
-  console.log("📥 [Backend] Stories feed request received");
   try {
     const { latitude, longitude, radius = 50, limit = 50 } = req.query;
     const userId = req.publicUserId;
@@ -215,17 +182,8 @@ exports.getStoriesFeed = async (req, res) => {
     const cacheKey = getCacheKey(userId, latitude, longitude);
     const cached = getCachedFeed(cacheKey);
     if (cached) {
-      console.log("✅ [Backend] Returning cached feed");
       return res.json(cached);
     }
-
-    console.log("📋 [Backend] Feed request details:", {
-      userId,
-      latitude,
-      longitude,
-      radius,
-      limit,
-    });
 
     // Build where clause properly for Sequelize
     const baseConditions = {
@@ -240,15 +198,9 @@ exports.getStoriesFeed = async (req, res) => {
         { public_user_id: userId }, // User's own stories (including pending)
         { moderation_status: "approved" }, // Others' stories must be approved
       ];
-      console.log(
-        "✅ [Backend] User authenticated - will show own stories (including pending) and approved stories from others"
-      );
     } else {
       // For non-authenticated users, only show approved stories
       baseConditions.moderation_status = "approved";
-      console.log(
-        "👤 [Backend] User not authenticated - will show only approved stories"
-      );
     }
 
     // Location-based filtering if coordinates provided
@@ -258,16 +210,6 @@ exports.getStoriesFeed = async (req, res) => {
       const lat = parseFloat(latitude);
       const lon = parseFloat(longitude);
       const rad = parseFloat(radius) || 50; // Default to 50km if not provided
-
-      console.log(
-        "📍 [Backend] Location filter requested, but user is authenticated"
-      );
-      console.log(
-        "📍 [Backend] Will include user's own stories regardless of location"
-      );
-      console.log(
-        "📍 [Backend] Will show ALL approved stories (location filter is informational only)"
-      );
 
       // For authenticated users: Show all approved stories regardless of location
       // This ensures users can see stories from all accounts, not just nearby ones
@@ -282,9 +224,6 @@ exports.getStoriesFeed = async (req, res) => {
       const lon = parseFloat(longitude);
       const rad = parseFloat(radius);
 
-      console.log(
-        "📍 [Backend] Location filter applied for non-authenticated user"
-      );
       baseConditions.latitude = {
         [Op.between]: [lat - rad / 111, lat + rad / 111],
       };
@@ -294,71 +233,71 @@ exports.getStoriesFeed = async (req, res) => {
     }
 
     const whereClause = baseConditions;
-    console.log(
-      "🔍 [Backend] Final where clause:",
-      JSON.stringify(whereClause, null, 2)
+
+    // Build includes array conditionally based on userId
+    const includes = [
+      {
+        model: PublicUser,
+        as: "user",
+        attributes: ["id", "name", "username", "photo", "isVerified"],
+      },
+    ];
+
+    // Only include StoryView filter if userId exists
+    if (userId) {
+      includes.push({
+        model: StoryView,
+        as: "views",
+        where: { viewer_id: userId },
+        required: false,
+      });
+    }
+
+    // Only include StoryReaction filter if userId exists
+    if (userId) {
+      includes.push({
+        model: StoryReaction,
+        as: "reactions",
+        where: { user_id: userId },
+        required: false,
+        separate: true, // Use separate query to allow ordering
+        order: [["createdAt", "DESC"]],
+        limit: 1, // Get only the most recent reaction for UI
+      });
+    }
+
+    // Add other includes
+    includes.push(
+      {
+        model: StoryChallenge,
+        as: "challenge",
+        required: false,
+      },
+      {
+        model: StoryCollection,
+        as: "collection",
+        required: false,
+      },
+      {
+        model: StoryMusic,
+        as: "music",
+        required: false,
+      }
     );
 
     const stories = await Story.findAll({
       where: whereClause,
-      include: [
-        {
-          model: PublicUser,
-          as: "user",
-          attributes: ["id", "name", "username", "photo", "isVerified"],
-        },
-        {
-          model: StoryView,
-          as: "views",
-          where: { viewer_id: userId },
-          required: false,
-        },
-        {
-          model: StoryReaction,
-          as: "reactions",
-          where: { user_id: userId },
-          required: false,
-          separate: true, // Use separate query to allow ordering
-          order: [["createdAt", "DESC"]],
-          limit: 1, // Get only the most recent reaction for UI
-        },
-        {
-          model: StoryChallenge,
-          as: "challenge",
-          required: false,
-        },
-        {
-          model: StoryCollection,
-          as: "collection",
-          required: false,
-        },
-        {
-          model: StoryMusic,
-          as: "music",
-          required: false,
-        },
-      ],
+      include: includes,
       order: [["createdAt", "DESC"]],
       limit: parseInt(limit),
     });
 
-    console.log("📊 [Backend] Stories found:", stories.length);
-    console.log(
-      "📊 [Backend] Stories details:",
-      stories.map((s) => ({
-        id: s.id,
-        userId: s.public_user_id,
-        mediaUrl: s.media_url,
-        moderationStatus: s.moderation_status,
-        hasLocation: !!(s.latitude && s.longitude),
-      }))
-    );
 
     // Format stories with view status
     const formattedStories = stories.map((story) => {
       const storyObj = story.toJSON();
-      storyObj.has_viewed = storyObj.views && storyObj.views.length > 0;
-      storyObj.user_reaction = storyObj.reactions && storyObj.reactions[0];
+      storyObj.has_viewed = userId ? (storyObj.views && storyObj.views.length > 0) : false;
+      storyObj.user_reaction = userId ? (storyObj.reactions && storyObj.reactions[0]) : null;
       delete storyObj.views;
       delete storyObj.reactions;
       return storyObj;
@@ -377,11 +316,6 @@ exports.getStoriesFeed = async (req, res) => {
       storiesByUser[userId].stories.push(story);
     });
 
-    console.log("✅ [Backend] Returning stories grouped by user:", {
-      userCount: Object.keys(storiesByUser).length,
-      totalStories: formattedStories.length,
-      userIds: Object.keys(storiesByUser),
-    });
 
     const response = {
       success: true,
@@ -507,10 +441,6 @@ exports.getStory = async (req, res) => {
 
       // Broadcast SSE event to all connected users
       try {
-        console.log("📡 [Backend] Broadcasting story:viewed event", {
-          storyId: story.id,
-          viewCount: story.view_count,
-        });
         broadcastToAll("story:viewed", {
           storyId: story.id,
           viewCount: story.view_count,

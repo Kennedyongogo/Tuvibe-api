@@ -247,9 +247,6 @@ exports.verifyPayment = async (req, res) => {
 
     const existing = await TokenTransaction.findOne({ where: { reference } });
     if (existing) {
-      console.log(
-        `ℹ️ Paystack reference ${reference} already processed for user ${userId}`
-      );
       return res.status(200).json({
         success: true,
         message: "Payment successful",

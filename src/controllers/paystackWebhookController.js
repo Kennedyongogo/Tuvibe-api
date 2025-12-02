@@ -69,11 +69,6 @@ exports.handleWebhook = async (req, res) => {
       const email = data.customer?.email;
       const userId = data.metadata?.userId;
 
-      console.log(
-        `✅ Verified Paystack webhook for ${
-          email || "unknown"
-        }, ref ${reference}`
-      );
 
       if (!userId) {
         console.warn(
@@ -92,7 +87,6 @@ exports.handleWebhook = async (req, res) => {
           email,
         });
       } else {
-        console.log(`ℹ️ Transaction ${reference} already processed`);
       }
     }
 

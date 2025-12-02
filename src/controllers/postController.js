@@ -631,7 +631,6 @@ exports.deletePost = async (req, res) => {
         postId: post.id,
         userId: userId,
       });
-      console.log("📡 [deletePost] SSE event broadcasted for post deletion:", post.id);
     } catch (err) {
       console.error("Failed to send SSE event for post deletion:", err);
     }
@@ -659,21 +658,12 @@ exports.addReaction = async (req, res) => {
     const { reaction_type = "like", emoji, emojis } = req.body;
     const userId = req.publicUserId;
 
-    console.log("🔵 [addReaction] Request received:", {
-      postId,
-      reaction_type,
-      emoji,
-      emojis,
-      userId,
-      timestamp: new Date().toISOString(),
-    });
 
     // Handle multiple emojis: if emojis array is provided, join them; otherwise use single emoji
     let emojiString = null;
     if (emojis && Array.isArray(emojis) && emojis.length > 0) {
       // Join multiple emojis with comma separator (same as stories)
       emojiString = emojis.join(",");
-      console.log("📝 [addReaction] Multiple emojis received, joined:", emojiString);
     } else if (emoji) {
       emojiString = emoji;
     }
@@ -682,26 +672,14 @@ exports.addReaction = async (req, res) => {
     // We don't need user data here, just post data
     const post = await PostModel.findByPk(postId);
     if (!post) {
-      console.log("❌ [addReaction] Post not found:", postId);
       return res
         .status(404)
         .json({ success: false, message: "Post not found" });
     }
 
-    console.log("✅ [addReaction] Post found:", {
-      postId: post.id,
-      currentLikeCount: post.like_count,
-      currentReactionCount: post.reaction_count,
-      moderationStatus: post.moderation_status,
-    });
 
     // Prevent all interactions on posts that are not approved (including from owner)
     if (post.moderation_status !== "approved") {
-      console.log("❌ [addReaction] Post not approved - interactions disabled:", {
-        postId: post.id,
-        moderationStatus: post.moderation_status,
-        userId,
-      });
       return res.status(403).json({
         success: false,
         message: "Cannot interact with post until it is approved",
@@ -713,15 +691,9 @@ exports.addReaction = async (req, res) => {
       attributes: ["id", "name", "username"],
     });
 
-    console.log("👤 [addReaction] Reacting user:", {
-      userId,
-      username: reactingUser?.username,
-      name: reactingUser?.name,
-    });
 
     // Validate userId is present
     if (!userId) {
-      console.log("❌ [addReaction] No userId provided");
       return res.status(401).json({
         success: false,
         message: "User authentication required",
@@ -730,11 +702,6 @@ exports.addReaction = async (req, res) => {
 
     // For likes (not emoji), check if THIS USER already liked - toggle behavior
     if (!emoji && reaction_type === "like") {
-      console.log("🔍 [addReaction] Checking for existing like:", {
-        postId,
-        userId,
-        reaction_type: "like",
-      });
 
       // First, check ALL likes for this post to see what's in the database
       const allLikesForPost = await PostReactionModel.findAll({
@@ -745,15 +712,6 @@ exports.addReaction = async (req, res) => {
         },
       });
 
-      console.log("📋 [addReaction] ALL likes for this post:", {
-        totalLikes: allLikesForPost.length,
-        likes: allLikesForPost.map((like) => ({
-          id: like.id,
-          user_id: like.user_id,
-          post_id: like.post_id,
-          createdAt: like.createdAt,
-        })),
-      });
 
       const existingLike = await PostReactionModel.findOne({
         where: {
@@ -764,21 +722,8 @@ exports.addReaction = async (req, res) => {
         },
       });
 
-      console.log("🔍 [addReaction] Existing like check result:", {
-        found: !!existingLike,
-        existingLikeId: existingLike?.id,
-        existingLikeUserId: existingLike?.user_id,
-        checkingUserId: userId,
-        match: existingLike?.user_id === userId,
-      });
 
       if (existingLike) {
-        console.log("🗑️ [addReaction] User already liked - REMOVING like:", {
-          existingLikeId: existingLike.id,
-          userId,
-          postId,
-          currentLikeCount: post.like_count,
-        });
 
         // THIS USER already liked, remove their like (unlike)
         await existingLike.destroy();
@@ -794,13 +739,6 @@ exports.addReaction = async (req, res) => {
         const likeCount = Math.max(0, post.like_count || 0);
         const reactionCount = Math.max(0, post.reaction_count || 0);
 
-        console.log("✅ [addReaction] Like REMOVED - Response:", {
-          removed: true,
-          like_count: likeCount,
-          reaction_count: reactionCount,
-          userId,
-          postId,
-        });
 
         // Broadcast SSE event to all connected users for real-time updates
         try {
@@ -826,20 +764,8 @@ exports.addReaction = async (req, res) => {
             reaction_count: reactionCount,
           },
         });
-      } else {
-        console.log(
-          "✅ [addReaction] No existing like found - will CREATE new like"
-        );
       }
     }
-
-    // Create a new reaction (for emoji reactions, allow multiple; for likes, this is first like for THIS USER)
-    console.log("➕ [addReaction] Creating new reaction:", {
-      postId,
-      userId,
-      reaction_type: emojiString ? "emoji" : reaction_type,
-      emoji: emojiString || null,
-    });
 
     let reaction;
     try {
@@ -848,12 +774,6 @@ exports.addReaction = async (req, res) => {
         user_id: userId,
         reaction_type: emojiString ? "emoji" : reaction_type,
         emoji: emojiString || null,
-      });
-      console.log("✅ [addReaction] Reaction created successfully:", {
-        reactionId: reaction.id,
-        userId: reaction.user_id,
-        postId: reaction.post_id,
-        reactionType: reaction.reaction_type,
       });
     } catch (createError) {
       // Handle unique constraint violation (shouldn't happen after fix, but just in case)
@@ -881,12 +801,6 @@ exports.addReaction = async (req, res) => {
         });
 
         if (existingReaction) {
-          console.log(
-            "✅ [addReaction] Found existing reaction (race condition):",
-            {
-              reactionId: existingReaction.id,
-            }
-          );
           // Reaction already exists, return existing one
           reaction = existingReaction;
         } else {
@@ -904,11 +818,6 @@ exports.addReaction = async (req, res) => {
     }
 
     // Update only the relevant count based on reaction type
-    console.log("📊 [addReaction] Updating counts - before:", {
-      like_count: post.like_count,
-      emoji_reaction_count: post.emoji_reaction_count,
-      reaction_count: post.reaction_count,
-    });
 
     if (emojiString) {
       // For emoji reactions, count each individual emoji (comma-separated)
@@ -919,14 +828,10 @@ exports.addReaction = async (req, res) => {
       await post.increment("emoji_reaction_count", { by: emojiCount });
       // reaction_count still increments by 1 (one reaction record)
       await post.increment("reaction_count");
-      console.log(
-        `📈 [addReaction] Incremented emoji_reaction_count by ${emojiCount} (${emojiCount} emojis) and reaction_count by 1`
-      );
     } else if (reaction_type === "like") {
       // For likes, increment like_count and reaction_count
       await post.increment("like_count");
       await post.increment("reaction_count");
-      console.log("📈 [addReaction] Incremented like_count and reaction_count");
     }
 
     // Reload post to get updated counts
@@ -937,11 +842,6 @@ exports.addReaction = async (req, res) => {
     const emojiCount = Math.max(0, post.emoji_reaction_count || 0);
     const reactionCount = Math.max(0, post.reaction_count || 0);
 
-    console.log("📊 [addReaction] Updated counts - after:", {
-      like_count: likeCount,
-      emoji_reaction_count: emojiCount,
-      reaction_count: reactionCount,
-    });
 
     // Create notification for post owner (don't notify for own reactions)
     if (post.public_user_id !== userId) {
@@ -986,15 +886,6 @@ exports.addReaction = async (req, res) => {
       responseData.user_reaction = reaction;
     }
 
-    console.log("✅ [addReaction] Success - Sending response:", {
-      success: true,
-      like_count: likeCount,
-      emoji_reaction_count: emojiCount,
-      reaction_count: reactionCount,
-      hasUserReaction: !!responseData.user_reaction,
-      userId,
-      postId,
-    });
 
     // Broadcast SSE event to all connected users for real-time updates
     try {
@@ -1116,9 +1007,6 @@ exports.removeReaction = async (req, res) => {
           : 1;
         // Decrement emoji_reaction_count by the number of emojis
         await post.decrement("emoji_reaction_count", { by: emojiCount });
-        console.log(
-          `📉 [removeReaction] Decremented emoji_reaction_count by ${emojiCount} (removed ${emojiCount} emojis)`
-        );
       } else if (reactionType === "like") {
         await post.decrement("like_count");
       }
@@ -1209,24 +1097,13 @@ exports.addComment = async (req, res) => {
     const { content, parent_comment_id } = req.body;
     const userId = req.publicUserId;
 
-    console.log("💬 [addComment] Request received:", {
-      postId,
-      content: content?.substring(0, 50),
-      parent_comment_id,
-      userId,
-      hasContent: !!content,
-      contentLength: content?.length,
-    });
-
     if (!content || !content.trim()) {
-      console.log("❌ [addComment] No content provided");
       return res
         .status(400)
         .json({ success: false, message: "Comment content is required" });
     }
 
     if (!userId) {
-      console.log("❌ [addComment] No userId found");
       return res
         .status(401)
         .json({ success: false, message: "User authentication required" });
@@ -1866,12 +1743,6 @@ exports.approvePost = async (req, res) => {
         user_reaction: null, // Each user will get their own when they view it
       };
 
-      console.log("📡 [approvePost] Broadcasting post:approved SSE event:", {
-        postId: post.id,
-        hasPostData: !!postData,
-        moderationStatus: postData.moderation_status,
-        isPublished: postData.is_published,
-      });
 
       // Broadcast as post:approved event
       broadcastToAll("post:approved", {

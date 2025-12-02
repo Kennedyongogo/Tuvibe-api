@@ -1216,16 +1216,6 @@ exports.updateMe = async (req, res) => {
             : null;
         updates.bio_moderation_status = "pending";
 
-        // Log for debugging production issues
-        if (process.env.NODE_ENV === "production") {
-          console.log("[Bio Update]", {
-            userId: req.publicUserId,
-            normalizedMatch: newBioNormalized === currentBioNormalized,
-            rawMatch:
-              String(req.body.bio || "") === String(currentUser.bio || ""),
-            shouldUpdate: true,
-          });
-        }
       }
     }
 
@@ -1323,13 +1313,6 @@ exports.updateMe = async (req, res) => {
       }
     }
 
-    // Log updates before saving (for debugging)
-    if (process.env.NODE_ENV === "development") {
-      console.log("Attempting to update with:", {
-        keys: Object.keys(updates),
-        photosCount: updates.photos ? updates.photos.length : 0,
-      });
-    }
 
     // Validate updates object before saving
     try {
@@ -2554,14 +2537,8 @@ exports.deletePhoto = async (req, res) => {
       }
     }
 
-    console.log("=== DELETE PHOTO BACKEND DEBUG ===");
-    console.log("Photo index to delete:", photoIndexNum);
-    console.log("Photos before deletion:", photos);
-    console.log("Photos count before:", photos.length);
-
     // Check if photo index is valid
     if (photoIndexNum >= photos.length) {
-      console.log("Invalid photo index - out of bounds");
       return res.status(404).json({
         success: false,
         message: "Photo not found",
@@ -2572,20 +2549,12 @@ exports.deletePhoto = async (req, res) => {
     const deletedPhoto = photos[photoIndexNum];
     photos.splice(photoIndexNum, 1);
 
-    console.log("Photos after deletion:", photos);
-    console.log("Photos count after:", photos.length);
-
     // Update user's photos array - ensure it's saved as JSONB array
     try {
       await user.update({ photos: photos }, { returning: true });
 
       // Reload user to verify the update
       await user.reload();
-      console.log("User photos after update:", user.photos);
-      console.log(
-        "User photos count after update:",
-        Array.isArray(user.photos) ? user.photos.length : "Not an array"
-      );
 
       // Verify the update worked
       const updatedPhotos = user.photos;
@@ -2888,7 +2857,6 @@ exports.deleteAccount = async (req, res) => {
       });
     } catch (sseError) {
       // Ignore SSE errors - account is already deleted
-      console.log("SSE notification failed (expected after account deletion)");
     }
 
     return res.json({
