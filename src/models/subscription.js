@@ -45,6 +45,21 @@ module.exports = (sequelize) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      authorization_code: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        comment: "Paystack authorization code for auto-renewal",
+      },
+      auto_renew_enabled: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        comment: "Whether subscription should auto-renew",
+      },
+      cancelled_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        comment: "When the subscription was cancelled",
+      },
     },
     {
       tableName: "subscriptions",

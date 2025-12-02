@@ -38,7 +38,48 @@ const {
   REGULAR_PLANS,
   useSuggestedMatchesForRegular,
 } = require("../services/subscriptionService");
-const { syncGoldVerificationBadge } = require("../services/goldVerificationService");
+const {
+  syncGoldVerificationBadge,
+} = require("../services/goldVerificationService");
+const { getPremiumBadgeType } = require("../services/premiumBadgeService");
+
+// Helper to add badge type to user data
+const addBadgeTypeToUser = async (userData, userInstance) => {
+  if (!userData || !userData.isVerified) {
+    userData.badgeType = null;
+    return userData;
+  }
+
+  const PREMIUM_CATEGORIES = [
+    "Sugar Mummy",
+    "Sponsor",
+    "Ben 10",
+    "Urban Chics",
+  ];
+
+  // Regular users with Gold subscription get "gold" badge
+  if (userData.category === "Regular") {
+    userData.badgeType = "gold";
+    return userData;
+  }
+
+  // Premium users - check subscription plan
+  if (PREMIUM_CATEGORIES.includes(userData.category)) {
+    try {
+      const badgeType = await getPremiumBadgeType(
+        userInstance || { id: userData.id, category: userData.category }
+      );
+      userData.badgeType = badgeType; // "silver" or "gold"
+    } catch (error) {
+      console.error("Error getting badge type:", error);
+      userData.badgeType = null;
+    }
+  } else {
+    userData.badgeType = null;
+  }
+
+  return userData;
+};
 
 const signPublicJwt = (userId) => {
   return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
@@ -518,9 +559,16 @@ exports.getMe = async (req, res) => {
 
     // Sync badges based on user category
     if (user) {
-      const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+      const PREMIUM_CATEGORIES = [
+        "Sugar Mummy",
+        "Sponsor",
+        "Ben 10",
+        "Urban Chics",
+      ];
       if (user.category === "Regular") {
-        const { syncGoldVerificationBadge } = require("../services/goldVerificationService");
+        const {
+          syncGoldVerificationBadge,
+        } = require("../services/goldVerificationService");
         await syncGoldVerificationBadge(user);
       } else if (PREMIUM_CATEGORIES.includes(user.category)) {
         const { syncPremiumBadge } = require("../services/premiumBadgeService");
@@ -533,9 +581,12 @@ exports.getMe = async (req, res) => {
     // Note: getMe doesn't emit SSE events since it's just a read operation
     // SSE events are emitted when data actually changes (updateMe, token changes, etc.)
 
+    const userData = formatUserForResponse(user);
+    await addBadgeTypeToUser(userData, user);
+
     return res.json({
       success: true,
-      data: formatUserForResponse(user),
+      data: userData,
     });
   } catch (err) {
     console.error("getMe error:", err);
@@ -577,7 +628,12 @@ exports.getWhoViewedMe = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const PREMIUM_CATEGORIES = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
     const isPremium = PREMIUM_CATEGORIES.includes(currentUser.category);
 
     if (currentUser.category === "Regular") {
@@ -599,7 +655,9 @@ exports.getWhoViewedMe = async (req, res) => {
         });
       }
     } else if (isPremium) {
-      const { useWhoViewedForPremium } = require("../services/subscriptionService");
+      const {
+        useWhoViewedForPremium,
+      } = require("../services/subscriptionService");
       const usage = await useWhoViewedForPremium(viewerId);
 
       if (!usage.subscription) {
@@ -693,7 +751,12 @@ exports.getSuggestedMatches = async (req, res) => {
     let usage = null;
     let allowedLimit = Infinity;
 
-    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const PREMIUM_CATEGORIES = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
     const isPremium = PREMIUM_CATEGORIES.includes(viewer.category);
 
     if (viewer.category === "Regular") {
@@ -715,7 +778,9 @@ exports.getSuggestedMatches = async (req, res) => {
 
       allowedLimit = usage.limit ?? Infinity;
     } else if (isPremium) {
-      const { useSuggestedMatchesForPremium } = require("../services/subscriptionService");
+      const {
+        useSuggestedMatchesForPremium,
+      } = require("../services/subscriptionService");
       usage = await useSuggestedMatchesForPremium(viewerId);
       if (!usage.subscription) {
         return res.status(402).json({
@@ -1670,22 +1735,26 @@ exports.list = async (req, res) => {
       // Update count to reflect filtered results
       const totalFiltered = usersWithDistance.length;
 
-      // Filter out unapproved photos and bios
-      const filteredRows = processedRows.map((user) => {
-        // Hide photo if not approved
-        if (user.photo_moderation_status !== "approved") {
-          user.photo = null;
-        }
-        // Filter photos array to only show approved photos
-        if (user.photos) {
-          user.photos = filterApprovedPhotos(user.photos);
-        }
-        // Hide bio if not approved
-        if (user.bio_moderation_status !== "approved") {
-          user.bio = null;
-        }
-        return user;
-      });
+      // Filter out unapproved photos and bios, and add badge types
+      const filteredRows = await Promise.all(
+        processedRows.map(async (user) => {
+          // Hide photo if not approved
+          if (user.photo_moderation_status !== "approved") {
+            user.photo = null;
+          }
+          // Filter photos array to only show approved photos
+          if (user.photos) {
+            user.photos = filterApprovedPhotos(user.photos);
+          }
+          // Hide bio if not approved
+          if (user.bio_moderation_status !== "approved") {
+            user.bio = null;
+          }
+          // Add badge type
+          await addBadgeTypeToUser(user, user);
+          return user;
+        })
+      );
 
       return res.json({
         success: true,
@@ -1699,27 +1768,31 @@ exports.list = async (req, res) => {
       });
     }
 
-    // Filter out unapproved photos and bios for public listings
-    const filteredRows = processedRows.map((user) => {
-      const userData = formatUserForPublicResponse(user);
-      const activeBoostUntil = user.get("active_boost_until");
-      if (activeBoostUntil) {
-        userData.active_boost_until = activeBoostUntil;
-      }
-      // Hide photo if not approved
-      if (userData.photo_moderation_status !== "approved") {
-        userData.photo = null;
-      }
-      // Filter photos array to only show approved photos
-      if (userData.photos) {
-        userData.photos = filterApprovedPhotos(userData.photos);
-      }
-      // Hide bio if not approved
-      if (userData.bio_moderation_status !== "approved") {
-        userData.bio = null;
-      }
-      return userData;
-    });
+    // Filter out unapproved photos and bios for public listings, and add badge types
+    const filteredRows = await Promise.all(
+      processedRows.map(async (user) => {
+        const userData = formatUserForPublicResponse(user);
+        const activeBoostUntil = user.get("active_boost_until");
+        if (activeBoostUntil) {
+          userData.active_boost_until = activeBoostUntil;
+        }
+        // Hide photo if not approved
+        if (userData.photo_moderation_status !== "approved") {
+          userData.photo = null;
+        }
+        // Filter photos array to only show approved photos
+        if (userData.photos) {
+          userData.photos = filterApprovedPhotos(userData.photos);
+        }
+        // Hide bio if not approved
+        if (userData.bio_moderation_status !== "approved") {
+          userData.bio = null;
+        }
+        // Add badge type
+        await addBadgeTypeToUser(userData, user);
+        return userData;
+      })
+    );
 
     return res.json({
       success: true,
@@ -1990,6 +2063,200 @@ exports.adminGetById = async (req, res) => {
   }
 };
 
+// Admin endpoint to create fake/demo user profiles
+// Follows the same flow as registration but allows bypassing some validations
+exports.adminCreateFakeUser = async (req, res) => {
+  try {
+    const {
+      name,
+      username,
+      gender,
+      email,
+      phone,
+      password,
+      bio,
+      category = "Regular",
+      county,
+      birth_year,
+      age,
+      latitude,
+      longitude,
+      isVerified = false,
+      autoApprove = false, // Default to pending like registration
+      bypassPhoneValidation = true, // Allow bypassing phone validation
+      bypassAgeCheck = true, // Allow bypassing age check
+    } = req.body;
+
+    // Basic validation - same as registration
+    const normalizedUsername =
+      typeof username === "string" ? username.trim() : "";
+    if (!name || !normalizedUsername || !email) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, username, and email are required",
+      });
+    }
+
+    // Phone validation (can be bypassed for fake users)
+    let normalizedPhone = phone || `+254700000000`;
+    if (phone && !bypassPhoneValidation) {
+      const {
+        valid: isPhoneValid,
+        normalized: validatedPhone,
+        message: phoneValidationMessage,
+      } = validatePhoneNumber(phone);
+
+      if (!isPhoneValid) {
+        return res.status(400).json({
+          success: false,
+          message: phoneValidationMessage,
+        });
+      }
+      normalizedPhone = validatedPhone;
+    }
+
+    // Check if username, email, or phone already exists
+    const exists = await PublicUser.findOne({
+      where: {
+        [Op.or]: [
+          { email },
+          { phone: normalizedPhone },
+          { username: normalizedUsername },
+        ],
+      },
+    });
+
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        message: "Email, phone, or username already in use",
+      });
+    }
+
+    // Handle birth year - same logic as registration
+    let birthYearValue = null;
+    if (birth_year) {
+      birthYearValue = parseInt(birth_year, 10);
+    } else if (age) {
+      const numericAge = parseInt(age, 10);
+      if (!Number.isNaN(numericAge) && numericAge > 0) {
+        const currentYear = new Date().getFullYear();
+        birthYearValue = currentYear - numericAge;
+      }
+    }
+
+    // Age validation (can be bypassed for fake users)
+    if (birthYearValue !== null && !bypassAgeCheck) {
+      const adultCheck = isAdultFromBirthYear(birthYearValue);
+      if (adultCheck === null || adultCheck === false) {
+        return res.status(403).json({
+          success: false,
+          message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to join TuVibe.`,
+        });
+      }
+    }
+
+    // Validate and normalize category - same as registration
+    const ALLOWED_CATEGORIES = [
+      "Regular",
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
+    const normalizedCategory =
+      typeof category === "string" && ALLOWED_CATEGORIES.includes(category)
+        ? category
+        : "Regular";
+
+    // Generate password (use provided password or random one)
+    const passwordToHash = password || `fake_${Date.now()}_${Math.random()}`;
+    const hashedPassword = await bcrypt.hash(passwordToHash, 10);
+
+    const now = new Date();
+
+    // Prepare user data - exactly like registration
+    const userData = {
+      name,
+      username: normalizedUsername,
+      gender: gender || null,
+      category: normalizedCategory,
+      phone: normalizedPhone,
+      email,
+      password: hashedPassword,
+      latitude: latitude || null,
+      longitude: longitude || null,
+      logged_in_at: now,
+      logged_out_at: null,
+      is_online: true, // Same as registration
+      last_seen_at: null, // Same as registration
+      isVerified: isVerified || false,
+    };
+
+    // Handle bio - same as registration
+    if (bio) {
+      userData.bio = bio;
+      userData.bio_moderation_status = autoApprove ? "approved" : "pending";
+    }
+
+    // Handle file upload if profile_image is provided - same as registration
+    if (req.file) {
+      // File path relative to uploads folder (e.g., "profiles/filename.jpg")
+      const photoPath = `profiles/${req.file.filename}`;
+      userData.photo = photoPath;
+      userData.photo_moderation_status = autoApprove ? "approved" : "pending";
+    }
+
+    // Handle birth year - same as registration
+    if (birthYearValue !== null) {
+      userData.birth_year = birthYearValue;
+      const computedAge = computeAgeFromBirthYear(birthYearValue);
+      if (computedAge !== null) {
+        userData.age = computedAge;
+      }
+    }
+
+    // Handle county
+    if (county) {
+      userData.county = county;
+    }
+
+    // Create the fake user
+    const user = await PublicUser.create(userData);
+
+    // Format response - same as registration
+    const formattedUser = formatUserForResponse(user);
+    await addBadgeTypeToUser(formattedUser, user);
+
+    // Return the plaintext password for admin use (only for fake users)
+    // This allows admins to login with fake profiles for testing
+    return res.status(201).json({
+      success: true,
+      message: "Fake user profile created successfully",
+      data: {
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
+        // Include plaintext password for admin to use for login
+        plaintextPassword: passwordToHash,
+        loginCredentials: {
+          email: email,
+          password: passwordToHash,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("admin create fake user error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create fake user profile",
+      error: err.message,
+    });
+  }
+};
+
 // Get public user profile by ID (for viewing other users)
 exports.getById = async (req, res) => {
   try {
@@ -2016,8 +2283,29 @@ exports.getById = async (req, res) => {
       });
     }
 
+    // Require active subscription to view profiles (except viewing own profile)
+    if (req.publicUserId && req.publicUserId !== user.id) {
+      const {
+        getActiveSubscriptionForUser,
+      } = require("../services/subscriptionService");
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+
+      if (!subscription || subscription.status !== "active") {
+        return res.status(402).json({
+          success: false,
+          message:
+            "Active subscription required to view profiles. Please subscribe to a plan.",
+        });
+      }
+    }
+
     // Check if viewed user is premium and has private profile mode enabled
-    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const PREMIUM_CATEGORIES = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
     const isViewedUserPremium = PREMIUM_CATEGORIES.includes(user.category);
     let shouldHideDetails = false;
 
@@ -2035,8 +2323,9 @@ exports.getById = async (req, res) => {
         const viewer = await PublicUser.findByPk(req.publicUserId, {
           attributes: ["category"],
         });
-        const isViewerPremium = viewer && PREMIUM_CATEGORIES.includes(viewer.category);
-        
+        const isViewerPremium =
+          viewer && PREMIUM_CATEGORIES.includes(viewer.category);
+
         // Hide details from non-premium users
         if (!isViewerPremium) {
           shouldHideDetails = true;
@@ -2076,6 +2365,9 @@ exports.getById = async (req, res) => {
       safeUser.county = null;
       // Keep basic info: username, category, isVerified, photo (if approved)
     }
+
+    // Add badge type
+    await addBadgeTypeToUser(safeUser, user);
 
     return res.json({
       success: true,

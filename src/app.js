@@ -33,6 +33,7 @@ const sseRoutes = require("./routes/sseRoutes");
 const storyRoutes = require("./routes/storyRoutes");
 const storyMusicRoutes = require("./routes/storyMusicRoutes");
 const postRoutes = require("./routes/postRoutes");
+const ratingTestimonialRoutes = require("./routes/ratingTestimonialRoutes");
 const {
   forgotPassword: adminForgotPassword,
 } = require("./controllers/adminUserController");
@@ -174,6 +175,7 @@ app.use("/api/sse", sseRoutes.router);
 app.use("/api/stories/music", storyMusicRoutes);
 app.use("/api/stories", storyRoutes);
 app.use("/api/posts", postRoutes);
+app.use("/api/ratings", ratingTestimonialRoutes);
 console.log("✅ TuVibe routes registered");
 console.log("✅ /api/chatbot route registered");
 console.log("✅ /api/ml route registered");
@@ -305,6 +307,24 @@ const startNotificationJobs = () => {
   console.log("✅ Notification maintenance jobs started");
 };
 
+// Start subscription expiration notification jobs
+const startSubscriptionNotificationJobs = () => {
+  // Check for expiring/expired subscriptions daily at 9:00 AM
+  cron.schedule("0 9 * * *", async () => {
+    try {
+      const subscriptionNotificationService = require("./services/subscriptionNotificationService");
+      await subscriptionNotificationService.runSubscriptionExpirationChecks();
+    } catch (err) {
+      console.error(
+        "[Subscription Notification Jobs] Error checking subscription expirations:",
+        err
+      );
+    }
+  });
+
+  console.log("✅ Subscription notification jobs started");
+};
+
 // Initialize models and associations
 const initializeApp = async () => {
   try {
@@ -330,6 +350,9 @@ const initializeApp = async () => {
 
     // Start notification cleanup jobs
     startNotificationJobs();
+
+    // Start subscription expiration notification jobs
+    startSubscriptionNotificationJobs();
 
     // Chatbot removed
 

@@ -18,7 +18,14 @@ const {
 const {
   adminList,
   adminGetById,
+  adminCreateFakeUser,
 } = require("../controllers/publicUserController");
+const {
+  adminCreateTestimonial,
+} = require("../controllers/ratingTestimonialController");
+const {
+  adminCreateFakeSubscription,
+} = require("../controllers/subscriptionController");
 const {
   authenticateAdmin,
   requireSuperAdmin,
@@ -49,6 +56,26 @@ router.get("/dashboard/stats", authenticateAdmin, getDashboardStats);
 router.get("/dashboard/analytics", authenticateAdmin, analytics);
 router.get("/public-users", authenticateAdmin, adminList);
 router.get("/public-users/:id", authenticateAdmin, adminGetById);
+router.post(
+  "/public-users/create-fake",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  uploadProfileImage,
+  handleUploadError,
+  adminCreateFakeUser
+);
+router.post(
+  "/testimonials/create-fake",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  adminCreateTestimonial
+);
+router.post(
+  "/subscriptions/create-fake",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  adminCreateFakeSubscription
+);
 router.get("/", authenticateAdmin, getAllAdmins);
 router.get("/:id", authenticateAdmin, getAdminById);
 

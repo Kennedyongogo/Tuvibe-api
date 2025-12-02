@@ -1,24 +1,43 @@
 const {
   PublicUser,
-  TokenTransaction,
   ChatUnlock,
   MarketItem,
+  Subscription,
+  SubscriptionUsage,
 } = require("../models");
 
-// Basic analytics for dashboard
+// Basic analytics for dashboard - Subscription-based
 exports.analytics = async (_req, res) => {
   try {
-    const [usersCount, premiumCount, tokensSum, unlocksCount, itemsCount] =
-      await Promise.all([
-        PublicUser.count(),
-        PublicUser.count({ where: { isVerified: true } }),
-        TokenTransaction.sum("amount").then((v) => Number(v || 0)),
-        ChatUnlock.count({ where: { status: "success" } }),
-        MarketItem.count(),
-      ]);
+    const now = new Date();
+    const [
+      usersCount,
+      premiumCount,
+      activeSubscriptions,
+      unlocksCount,
+      itemsCount,
+    ] = await Promise.all([
+      PublicUser.count(),
+      PublicUser.count({ where: { isVerified: true } }),
+      Subscription.count({
+        where: {
+          status: "active",
+          starts_at: { [Op.lte]: now },
+          expires_at: { [Op.gt]: now },
+        },
+      }),
+      ChatUnlock.count({ where: { status: "success" } }),
+      MarketItem.count(),
+    ]);
     return res.json({
       success: true,
-      data: { usersCount, premiumCount, tokensSum, unlocksCount, itemsCount },
+      data: {
+        usersCount,
+        premiumCount,
+        activeSubscriptions,
+        unlocksCount,
+        itemsCount,
+      },
     });
   } catch (err) {
     console.error("analytics error:", err);
@@ -669,28 +688,555 @@ const getPublicAdminById = async (req, res) => {
   }
 };
 
-// Get platform dashboard stats
+// Get platform dashboard stats - Subscription-based
 const getDashboardStats = async (req, res) => {
   try {
-    // Get counts
-    const totalAdmins = await AdminUser.count();
-    const totalPublicUsers = await PublicUser.count();
-    const totalPremiumUsers = await PublicUser.count({
-      where: { isVerified: true },
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const thisWeek = new Date(today);
+    thisWeek.setDate(thisWeek.getDate() - 7);
+    const thisMonth = new Date(today);
+    thisMonth.setMonth(thisMonth.getMonth() - 1);
+
+    // ==================== OVERVIEW STATS ====================
+    const overview = {
+      totalAdmins: await AdminUser.count(),
+      totalPublicUsers: await PublicUser.count(),
+      totalPremiumUsers: await PublicUser.count({
+        where: { isVerified: true },
+      }),
+      totalMarketItems: await MarketItem.count(),
+      onlineUsers: await PublicUser.count({ where: { is_online: true } }),
+    };
+
+    // User breakdown by category
+    const usersByCategory = await PublicUser.findAll({
+      attributes: [
+        "category",
+        [
+          require("sequelize").fn("count", require("sequelize").col("id")),
+          "count",
+        ],
+      ],
+      group: ["category"],
+      raw: true,
     });
-    const totalMarketItems = await MarketItem.count();
-    const totalChatUnlocks = await ChatUnlock.count();
+
+    const categoryBreakdown = {
+      Regular: 0,
+      "Sugar Mummy": 0,
+      Sponsor: 0,
+      "Ben 10": 0,
+      "Urban Chics": 0,
+    };
+    usersByCategory.forEach((row) => {
+      if (categoryBreakdown.hasOwnProperty(row.category)) {
+        categoryBreakdown[row.category] = parseInt(row.count) || 0;
+      }
+    });
+
+    // ==================== SUBSCRIPTION STATS ====================
+    const subscriptionStats = {
+      // Total subscriptions
+      totalSubscriptions: await Subscription.count(),
+      activeSubscriptions: await Subscription.count({
+        where: {
+          status: "active",
+          [Op.and]: [
+            {
+              [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+            },
+            {
+              [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+            },
+          ],
+        },
+      }),
+      expiredSubscriptions: await Subscription.count({
+        where: { status: "expired" },
+      }),
+      pendingSubscriptions: await Subscription.count({
+        where: { status: "pending" },
+      }),
+      cancelledSubscriptions: await Subscription.count({
+        where: { status: "cancelled" },
+      }),
+
+      // Subscriptions by plan
+      silverSubscriptions: await Subscription.count({
+        where: {
+          plan: "Silver",
+          status: "active",
+          [Op.and]: [
+            {
+              [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+            },
+            {
+              [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+            },
+          ],
+        },
+      }),
+      goldSubscriptions: await Subscription.count({
+        where: {
+          plan: "Gold",
+          status: "active",
+          [Op.and]: [
+            {
+              [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+            },
+            {
+              [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+            },
+          ],
+        },
+      }),
+
+      // Subscriptions by user category (Regular vs Premium)
+      regularUserSubscriptions: await Subscription.count({
+        include: [
+          {
+            model: PublicUser,
+            as: "subscriber",
+            where: { category: "Regular" },
+            required: true,
+          },
+        ],
+        where: {
+          status: "active",
+          [Op.and]: [
+            {
+              [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+            },
+            {
+              [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+            },
+          ],
+        },
+      }),
+      premiumUserSubscriptions: await Subscription.count({
+        include: [
+          {
+            model: PublicUser,
+            as: "subscriber",
+            where: {
+              category: {
+                [Op.in]: ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"],
+              },
+            },
+            required: true,
+          },
+        ],
+        where: {
+          status: "active",
+          [Op.and]: [
+            {
+              [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+            },
+            {
+              [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+            },
+          ],
+        },
+      }),
+
+      // Subscription revenue
+      totalRevenue: await Subscription.sum("amount", {
+        where: { status: "active" },
+      }).then((v) => Number(v || 0)),
+      revenueToday: await Subscription.sum("amount", {
+        where: {
+          status: "active",
+          createdAt: { [Op.gte]: today },
+        },
+      }).then((v) => Number(v || 0)),
+      revenueThisWeek: await Subscription.sum("amount", {
+        where: {
+          status: "active",
+          createdAt: { [Op.gte]: thisWeek },
+        },
+      }).then((v) => Number(v || 0)),
+      revenueThisMonth: await Subscription.sum("amount", {
+        where: {
+          status: "active",
+          createdAt: { [Op.gte]: thisMonth },
+        },
+      }).then((v) => Number(v || 0)),
+
+      // Revenue by plan
+      silverRevenue: await Subscription.sum("amount", {
+        where: {
+          plan: "Silver",
+          status: "active",
+        },
+      }).then((v) => Number(v || 0)),
+      goldRevenue: await Subscription.sum("amount", {
+        where: {
+          plan: "Gold",
+          status: "active",
+        },
+      }).then((v) => Number(v || 0)),
+    };
+
+    // ==================== SUBSCRIPTION USAGE STATS ====================
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const usageStats = {
+      // Today's usage
+      todayWhatsAppContacts: await SubscriptionUsage.sum(
+        "whatsapp_contacts_used",
+        {
+          where: { usage_date: todayStr },
+        }
+      ).then((v) => Number(v || 0)),
+      todayWhoViewed: await SubscriptionUsage.sum("who_viewed_used", {
+        where: { usage_date: todayStr },
+      }).then((v) => Number(v || 0)),
+      todayPremiumUnlocks: await SubscriptionUsage.sum("premium_unlocks_used", {
+        where: { usage_date: todayStr },
+      }).then((v) => Number(v || 0)),
+      todayBoosts: await SubscriptionUsage.sum("boosts_used", {
+        where: { usage_date: todayStr },
+      }).then((v) => Number(v || 0)),
+      todaySuggestedMatches: await SubscriptionUsage.sum(
+        "suggested_matches_used",
+        {
+          where: { usage_date: todayStr },
+        }
+      ).then((v) => Number(v || 0)),
+      todayIncognitoMinutes: await SubscriptionUsage.sum(
+        "incognito_minutes_used",
+        {
+          where: { usage_date: todayStr },
+        }
+      ).then((v) => Number(v || 0)),
+
+      // This week's usage
+      weekWhatsAppContacts: await SubscriptionUsage.sum(
+        "whatsapp_contacts_used",
+        {
+          where: {
+            usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
+          },
+        }
+      ).then((v) => Number(v || 0)),
+      weekWhoViewed: await SubscriptionUsage.sum("who_viewed_used", {
+        where: {
+          usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+      weekPremiumUnlocks: await SubscriptionUsage.sum("premium_unlocks_used", {
+        where: {
+          usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+      weekBoosts: await SubscriptionUsage.sum("boosts_used", {
+        where: {
+          usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+
+      // This month's usage
+      monthWhatsAppContacts: await SubscriptionUsage.sum(
+        "whatsapp_contacts_used",
+        {
+          where: {
+            usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
+          },
+        }
+      ).then((v) => Number(v || 0)),
+      monthWhoViewed: await SubscriptionUsage.sum("who_viewed_used", {
+        where: {
+          usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+      monthPremiumUnlocks: await SubscriptionUsage.sum("premium_unlocks_used", {
+        where: {
+          usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+      monthBoosts: await SubscriptionUsage.sum("boosts_used", {
+        where: {
+          usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
+        },
+      }).then((v) => Number(v || 0)),
+    };
+
+    // ==================== SUBSCRIPTION BREAKDOWN ====================
+    // Regular users with subscriptions
+    const regularSilverSubscriptions = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: { category: "Regular" },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Silver",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const regularGoldSubscriptions = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: { category: "Regular" },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Gold",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    // Premium users with subscriptions
+    const premiumSilverSubscriptions = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: {
+            category: {
+              [Op.in]: ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"],
+            },
+          },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Silver",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const premiumGoldSubscriptions = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: {
+            category: {
+              [Op.in]: ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"],
+            },
+          },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Gold",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const subscriptionBreakdown = {
+      regularSilver: regularSilverSubscriptions,
+      regularGold: regularGoldSubscriptions,
+      premiumSilver: premiumSilverSubscriptions,
+      premiumGold: premiumGoldSubscriptions,
+    };
+
+    // ==================== BADGE STATISTICS ====================
+    // Gold Verification Badge: Regular users with Gold subscription + Premium users with Gold subscription
+    const regularUsersWithGoldBadge = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: { category: "Regular" },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Gold",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const premiumUsersWithGoldBadge = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: {
+            category: {
+              [Op.in]: ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"],
+            },
+          },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Gold",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    // Premium Silver Badge: Premium users with Silver subscription
+    const premiumUsersWithSilverBadge = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: {
+            category: {
+              [Op.in]: ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"],
+            },
+          },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Silver",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    // Users with no badge: Regular users with Silver subscription or no subscription
+    const regularUsersWithSilverSubscription = await Subscription.count({
+      include: [
+        {
+          model: PublicUser,
+          as: "subscriber",
+          where: { category: "Regular" },
+          required: true,
+        },
+      ],
+      where: {
+        plan: "Silver",
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const totalUsersWithActiveSubscriptions = await Subscription.count({
+      where: {
+        status: "active",
+        [Op.and]: [
+          {
+            [Op.or]: [{ starts_at: { [Op.lte]: now } }, { starts_at: null }],
+          },
+          {
+            [Op.or]: [{ expires_at: { [Op.gt]: now } }, { expires_at: null }],
+          },
+        ],
+      },
+    });
+
+    const usersWithoutSubscription =
+      overview.totalPublicUsers - totalUsersWithActiveSubscriptions;
+
+    const badgeStats = {
+      // Gold Verification Badge (Regular Gold + Premium Gold)
+      goldVerificationBadge:
+        regularUsersWithGoldBadge + premiumUsersWithGoldBadge,
+      goldVerificationBreakdown: {
+        regularUsers: regularUsersWithGoldBadge,
+        premiumUsers: premiumUsersWithGoldBadge,
+      },
+
+      // Premium Silver Badge (Premium Silver only)
+      premiumSilverBadge: premiumUsersWithSilverBadge,
+
+      // No Badge (Regular Silver + Users without subscription)
+      noBadge: regularUsersWithSilverSubscription + usersWithoutSubscription,
+      noBadgeBreakdown: {
+        regularSilverSubscription: regularUsersWithSilverSubscription,
+        noSubscription: usersWithoutSubscription,
+      },
+
+      // Total users with badges
+      totalUsersWithBadges:
+        regularUsersWithGoldBadge +
+        premiumUsersWithGoldBadge +
+        premiumUsersWithSilverBadge,
+    };
+
+    // ==================== OTHER STATS ====================
+    const otherStats = {
+      totalChatUnlocks: await ChatUnlock.count({
+        where: { status: "success" },
+      }),
+      totalFavourites: await require("../models").Favourite.count(),
+      totalProfileViews: await require("../models").ProfileView.count(),
+    };
 
     res.status(200).json({
       success: true,
       data: {
-        stats: {
-          totalAdmins,
-          totalPublicUsers,
-          totalPremiumUsers,
-          totalMarketItems,
-          totalChatUnlocks,
-        },
+        overview,
+        categoryBreakdown,
+        subscriptionStats,
+        subscriptionBreakdown,
+        usageStats,
+        badgeStats,
+        otherStats,
       },
     });
   } catch (error) {

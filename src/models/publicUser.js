@@ -143,6 +143,13 @@ module.exports = (sequelize) => {
         field: "incognito_expires_at",
         comment: "When incognito mode ends (subscription benefit)",
       },
+      rating_prompt_dismissed_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: "rating_prompt_dismissed_at",
+        comment:
+          "When user dismissed the rating prompt (prompts again after 3 days)",
+      },
     },
     {
       tableName: "public_users",

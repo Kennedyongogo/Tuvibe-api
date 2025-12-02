@@ -12,10 +12,20 @@ const RECENT_LIMIT = 20;
 
 const toNumber = (value) => (value == null ? null : Number(value));
 
-const hasPremiumAccess = (user) => {
+const hasPremiumAccess = async (user) => {
   if (!user) return false;
+  
+  // Check if user has isVerified badge (which is synced with active subscription)
   if (user.isVerified) return true;
-  if (PREMIUM_CATEGORIES.includes(user.category)) return true;
+  
+  // For premium category users, verify they have an active subscription
+  if (PREMIUM_CATEGORIES.includes(user.category)) {
+    const { getActiveSubscriptionForUser } = require("../services/subscriptionService");
+    const subscription = await getActiveSubscriptionForUser(user.id);
+    // Only grant access if they have an active subscription
+    return Boolean(subscription && subscription.status === "active");
+  }
+  
   return false;
 };
 
@@ -58,38 +68,42 @@ exports.getPremiumOverview = async (req, res) => {
       .json({ success: false, message: "User context not available." });
   }
 
-  const now = new Date();
-
-  let activeBoostAccess = null;
-  try {
-    activeBoostAccess = await ProfileBoost.findOne({
-      where: {
-        public_user_id: userId,
-        status: "active",
-        ends_at: { [Op.gt]: now },
-      },
-      order: [["ends_at", "DESC"]],
-    });
-  } catch (error) {
-    console.error("[PremiumStats] Failed to check boost access", {
-      userId,
-      error,
-    });
-  }
-
-  if (!hasPremiumAccess(user) && !activeBoostAccess) {
-    console.warn("[PremiumStats] Access denied – user not premium or boosted", {
+  // Check if user has active subscription (required for statistics access)
+  // Note: Boosts also require subscriptions, so checking boost access is redundant
+  const hasAccess = await hasPremiumAccess(user);
+  if (!hasAccess) {
+    console.warn("[PremiumStats] Access denied – active subscription required", {
       userId,
     });
     return res.status(403).json({
       success: false,
-      message: "Premium upgrade or active boost required to view statistics.",
+      message: "Active subscription required to view statistics.",
     });
   }
 
   console.log("[PremiumStats] Fetching overview", { userId });
 
+  const now = new Date();
+
   try {
+    // Fetch active boost for statistics display (not for access control)
+    let activeBoost = null;
+    try {
+      activeBoost = await ProfileBoost.findOne({
+        where: {
+          public_user_id: userId,
+          status: "active",
+          ends_at: { [Op.gt]: now },
+        },
+        order: [["ends_at", "DESC"]],
+      });
+    } catch (error) {
+      console.error("[PremiumStats] Failed to fetch active boost", {
+        userId,
+        error,
+      });
+    }
+
     const [
       totalViews,
       uniqueViewers,
@@ -147,8 +161,6 @@ exports.getPremiumOverview = async (req, res) => {
       }),
       ProfileBoost.count({ where: { public_user_id: userId } }),
     ]);
-
-    const activeBoost = activeBoostAccess;
 
     let viewsDuringActiveBoost = 0;
     if (activeBoost) {

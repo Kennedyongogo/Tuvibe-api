@@ -32,6 +32,7 @@ const Post = require("./post")(sequelize);
 const PostReaction = require("./postReaction")(sequelize);
 const PostComment = require("./postComment")(sequelize);
 const CommentReaction = require("./commentReaction")(sequelize);
+const RatingTestimonial = require("./ratingTestimonial")(sequelize);
 
 const models = {
   AdminUser,
@@ -65,6 +66,7 @@ const models = {
   PostReaction,
   PostComment,
   CommentReaction,
+  RatingTestimonial,
 };
 
 const ensureProfileBoostTargetAreaColumn = async () => {
@@ -215,7 +217,9 @@ const ensurePublicUserIncognitoColumn = async () => {
   try {
     const tableDefinition = await queryInterface.describeTable("public_users");
     if (tableDefinition?.incognito_expires_at) {
-      console.log("ℹ️ incognito_expires_at column already exists on public_users");
+      console.log(
+        "ℹ️ incognito_expires_at column already exists on public_users"
+      );
       return;
     }
     console.log("🔧 Adding incognito_expires_at column to public_users...");
@@ -252,6 +256,56 @@ const ensurePublicUserIncognitoColumn = async () => {
   }
 };
 
+const ensurePublicUserRatingPromptDismissedColumn = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable("public_users");
+    if (tableDefinition?.rating_prompt_dismissed_at) {
+      console.log(
+        "ℹ️ rating_prompt_dismissed_at column already exists on public_users"
+      );
+      return;
+    }
+    console.log(
+      "🔧 Adding rating_prompt_dismissed_at column to public_users..."
+    );
+    await queryInterface.addColumn(
+      "public_users",
+      "rating_prompt_dismissed_at",
+      {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: "rating_prompt_dismissed_at",
+      }
+    );
+    console.log("✅ rating_prompt_dismissed_at column added to public_users");
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ public_users table missing; rating_prompt_dismissed_at will be created during sync."
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists) {
+      console.log(
+        "ℹ️ rating_prompt_dismissed_at column already exists on public_users (race condition)"
+      );
+      return;
+    }
+    console.error(
+      "⚠️ Failed to add rating_prompt_dismissed_at column to public_users:",
+      error
+    );
+    // Don't throw - allow sync to continue
+  }
+};
+
 const ensureSubscriptionUsageIncognitoColumn = async () => {
   const queryInterface = sequelize.getQueryInterface();
   try {
@@ -264,12 +318,18 @@ const ensureSubscriptionUsageIncognitoColumn = async () => {
       );
       return;
     }
-    console.log("🔧 Adding incognito_minutes_used column to subscription_usage...");
-    await queryInterface.addColumn("subscription_usage", "incognito_minutes_used", {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0,
-    });
+    console.log(
+      "🔧 Adding incognito_minutes_used column to subscription_usage..."
+    );
+    await queryInterface.addColumn(
+      "subscription_usage",
+      "incognito_minutes_used",
+      {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+      }
+    );
     console.log("✅ incognito_minutes_used column added to subscription_usage");
   } catch (error) {
     const tableMissing =
@@ -294,6 +354,78 @@ const ensureSubscriptionUsageIncognitoColumn = async () => {
       "⚠️ Failed to add incognito_minutes_used column to subscription_usage:",
       error
     );
+    // Don't throw - allow sync to continue
+  }
+};
+
+const ensureSubscriptionAutoRenewalColumns = async () => {
+  const queryInterface = sequelize.getQueryInterface();
+  try {
+    const tableDefinition = await queryInterface.describeTable("subscriptions");
+
+    // Add authorization_code column
+    if (!tableDefinition?.authorization_code) {
+      console.log("🔧 Adding authorization_code column to subscriptions...");
+      await queryInterface.addColumn("subscriptions", "authorization_code", {
+        type: DataTypes.STRING,
+        allowNull: true,
+        field: "authorization_code",
+      });
+      console.log("✅ authorization_code column added to subscriptions");
+    } else {
+      console.log(
+        "ℹ️ authorization_code column already exists on subscriptions"
+      );
+    }
+
+    // Add auto_renew_enabled column
+    if (!tableDefinition?.auto_renew_enabled) {
+      console.log("🔧 Adding auto_renew_enabled column to subscriptions...");
+      await queryInterface.addColumn("subscriptions", "auto_renew_enabled", {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: "auto_renew_enabled",
+      });
+      console.log("✅ auto_renew_enabled column added to subscriptions");
+    } else {
+      console.log(
+        "ℹ️ auto_renew_enabled column already exists on subscriptions"
+      );
+    }
+
+    // Add cancelled_at column
+    if (!tableDefinition?.cancelled_at) {
+      console.log("🔧 Adding cancelled_at column to subscriptions...");
+      await queryInterface.addColumn("subscriptions", "cancelled_at", {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: "cancelled_at",
+      });
+      console.log("✅ cancelled_at column added to subscriptions");
+    } else {
+      console.log("ℹ️ cancelled_at column already exists on subscriptions");
+    }
+  } catch (error) {
+    const tableMissing =
+      error?.original?.code === "42P01" ||
+      error?.message?.toLowerCase?.().includes("does not exist");
+    if (tableMissing) {
+      console.log(
+        "ℹ️ subscriptions table does not exist yet, will be created on sync"
+      );
+      return;
+    }
+    const columnExists =
+      error?.original?.code === "42701" ||
+      error?.message?.toLowerCase?.().includes("already exists");
+    if (columnExists) {
+      console.log(
+        "ℹ️ Subscription auto-renewal columns already exist (race condition)"
+      );
+      return;
+    }
+    console.error("❌ Error adding subscription auto-renewal columns:", error);
     // Don't throw - allow sync to continue
   }
 };
@@ -399,6 +531,7 @@ const initializeModels = async () => {
     await retrySync(AdminUser, "AdminUser");
     await retrySync(PublicUser, "PublicUser");
     await ensurePublicUserIncognitoColumn();
+    await ensurePublicUserRatingPromptDismissedColumn();
 
     await retrySync(PremiumVerification, "PremiumVerification");
     await retrySync(MarketItem, "MarketItem");
@@ -409,6 +542,7 @@ const initializeModels = async () => {
     await retrySync(Favourite, "Favourite");
     await retrySync(Payment, "Payment");
     await retrySync(Subscription, "Subscription");
+    await ensureSubscriptionAutoRenewalColumns();
     await retrySync(SubscriptionUsage, "SubscriptionUsage");
     await ensureSubscriptionUsageIncognitoColumn();
     await retrySync(Notification, "Notification");
@@ -434,6 +568,7 @@ const initializeModels = async () => {
     await retrySync(PostReaction, "PostReaction");
     await retrySync(PostComment, "PostComment");
     await retrySync(CommentReaction, "CommentReaction");
+    await retrySync(RatingTestimonial, "RatingTestimonial");
 
     console.log("✅ All models synced successfully");
   } catch (error) {
@@ -908,13 +1043,25 @@ const setupAssociations = () => {
       as: "commentReactions",
     });
 
+    // PublicUser ↔ RatingTestimonial
+    models.PublicUser.hasOne(models.RatingTestimonial, {
+      foreignKey: "public_user_id",
+      as: "ratingTestimonial",
+    });
+    models.RatingTestimonial.belongsTo(models.PublicUser, {
+      foreignKey: "public_user_id",
+      as: "user",
+    });
+
     console.log("✅ All associations set up successfully");
   } catch (error) {
     console.error("❌ Error during setupAssociations:", error);
   }
 };
 
-const syncAllModelsWithOptions = async (options = { force: false, alter: false }) => {
+const syncAllModelsWithOptions = async (
+  options = { force: false, alter: false }
+) => {
   const syncOrder = [
     "AdminUser",
     "PublicUser",

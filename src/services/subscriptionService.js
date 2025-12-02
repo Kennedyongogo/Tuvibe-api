@@ -63,7 +63,9 @@ const getActiveSubscriptionForUser = async (publicUserId) => {
   return Subscription.findOne({
     where: {
       public_user_id: publicUserId,
-      status: "active",
+      status: {
+        [Op.in]: ["active", "cancelled"], // Include cancelled - still active until expiry
+      },
       starts_at: { [Op.lte]: now },
       expires_at: { [Op.gt]: now },
     },
@@ -302,10 +304,7 @@ const useIncognitoMinutesForRegular = async (
       ? requestedMinutes
       : limit;
   const available = limit - used;
-  const minutesToConsume = Math.max(
-    0,
-    Math.min(available, desiredMinutes)
-  );
+  const minutesToConsume = Math.max(0, Math.min(available, desiredMinutes));
 
   if (minutesToConsume <= 0) {
     return {
@@ -516,10 +515,7 @@ const useIncognitoMinutesForPremium = async (
       ? requestedMinutes
       : limit;
   const available = limit - used;
-  const minutesToConsume = Math.max(
-    0,
-    Math.min(available, desiredMinutes)
-  );
+  const minutesToConsume = Math.max(0, Math.min(available, desiredMinutes));
 
   if (minutesToConsume <= 0) {
     return {
