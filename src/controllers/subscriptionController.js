@@ -216,7 +216,8 @@ exports.initializeSubscription = async (req, res) => {
     }
 
     const reference = data.data.reference;
-    const paystackResponseAmount = data.data.amount;
+    // Use amount from response if available, otherwise use the amount we sent
+    const paystackResponseAmount = data.data.amount || paystackAmount;
     const currency = data.data.currency || PAYSTACK_CURRENCY;
 
     if (!reference) {
@@ -227,7 +228,8 @@ exports.initializeSubscription = async (req, res) => {
       });
     }
 
-    if (!paystackResponseAmount || !Number.isFinite(Number(paystackResponseAmount))) {
+    // Validate amount - use the one we sent if response doesn't have it
+    if (!Number.isFinite(Number(paystackResponseAmount))) {
       console.error("initializeSubscription invalid amount:", data.data);
       return res.status(400).json({
         success: false,
