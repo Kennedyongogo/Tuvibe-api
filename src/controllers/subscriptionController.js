@@ -206,7 +206,34 @@ exports.initializeSubscription = async (req, res) => {
       });
     }
 
+    // Validate required fields from Paystack response
+    if (!data.data) {
+      console.error("initializeSubscription missing data object:", data);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid response from Paystack",
+      });
+    }
+
     const reference = data.data.reference;
+    const paystackResponseAmount = data.data.amount;
+    const currency = data.data.currency || PAYSTACK_CURRENCY;
+
+    if (!reference) {
+      console.error("initializeSubscription missing reference:", data.data);
+      return res.status(400).json({
+        success: false,
+        message: "Payment reference not received from Paystack",
+      });
+    }
+
+    if (!paystackResponseAmount || !Number.isFinite(Number(paystackResponseAmount))) {
+      console.error("initializeSubscription invalid amount:", data.data);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment amount received from Paystack",
+      });
+    }
 
     await Subscription.create({
       public_user_id: req.publicUserId,
@@ -223,8 +250,8 @@ exports.initializeSubscription = async (req, res) => {
       success: true,
       authorization_url: data.data.authorization_url,
       reference,
-      paystack_amount: data.data.amount,
-      currency: data.data.currency,
+      paystack_amount: Number(paystackResponseAmount),
+      currency,
       access_code: data.data.access_code,
     });
   } catch (err) {
@@ -830,11 +857,29 @@ exports.upgradeSubscription = async (req, res) => {
       });
     }
 
+    // Validate required fields from Paystack response
+    if (!data.data) {
+      console.error("upgradeSubscription missing data object:", data);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid response from Paystack",
+      });
+    }
+
+    const reference = data.data.reference;
+    if (!reference) {
+      console.error("upgradeSubscription missing reference:", data.data);
+      return res.status(400).json({
+        success: false,
+        message: "Payment reference not received from Paystack",
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: "Payment initialized for upgrade",
       authorization_url: data.data.authorization_url,
-      reference: data.data.reference,
+      reference,
       proratedAmount: proratedAmount,
       newPlan: normalizedPlan,
       newAmount: newPlanPrice,
