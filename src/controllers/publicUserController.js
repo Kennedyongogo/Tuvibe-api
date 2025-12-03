@@ -921,6 +921,76 @@ exports.getBoostStatus = async (req, res) => {
   }
 };
 
+// Admin endpoint to get user's boost status
+exports.adminGetUserBoostStatus = async (req, res) => {
+  try {
+    const { public_user_id } = req.params;
+
+    if (!public_user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "public_user_id is required",
+      });
+    }
+
+    const now = new Date();
+
+    const activeBoosts = await ProfileBoost.findAll({
+      where: {
+        public_user_id: public_user_id,
+        status: "active",
+        ends_at: { [Op.gt]: now },
+      },
+      order: [["ends_at", "ASC"]],
+    });
+
+    if (!activeBoosts || activeBoosts.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          status: "inactive",
+          boost: null,
+          boosts: [],
+          activeCount: 0,
+        },
+      });
+    }
+
+    const formattedBoosts = activeBoosts.map((boost) => {
+      const radiusValue =
+        boost.target_radius_km !== null
+          ? Number.parseFloat(boost.target_radius_km)
+          : null;
+      return {
+        id: boost.id,
+        starts_at: boost.starts_at,
+        ends_at: boost.ends_at,
+        target_category: boost.target_category,
+        target_area: boost.target_area,
+        radius_km: radiusValue,
+        target_lat: boost.target_lat,
+        target_lng: boost.target_lng,
+        status: boost.status,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        status: "active",
+        boost: formattedBoosts[0],
+        boosts: formattedBoosts,
+        activeCount: formattedBoosts.length,
+      },
+    });
+  } catch (err) {
+    console.error("adminGetUserBoostStatus error:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch boost status" });
+  }
+};
+
 exports.updateMe = async (req, res) => {
   let updates = {};
   try {
@@ -1215,7 +1285,6 @@ exports.updateMe = async (req, res) => {
             ? req.body.bio.trim()
             : null;
         updates.bio_moderation_status = "pending";
-
       }
     }
 
@@ -1312,7 +1381,6 @@ exports.updateMe = async (req, res) => {
         delete updates.photos;
       }
     }
-
 
     // Validate updates object before saving
     try {

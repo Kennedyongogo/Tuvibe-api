@@ -10,7 +10,10 @@ const {
 } = require("../config/pricing");
 const {
   useBoostForRegular,
+  useBoostHoursForRegular,
+  useBoostHoursForPremium,
   REGULAR_PLANS,
+  PREMIUM_PLANS,
   getActiveSubscriptionForUser,
 } = require("../services/subscriptionService");
 const { normalizeCountyName } = require("../config/kenyaCounties");
@@ -220,72 +223,91 @@ exports.boostProfile = async (req, res) => {
     let extensionMs = 0;
     let totalHoursPurchased = 0;
 
-    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
+    const PREMIUM_CATEGORIES = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
     const isPremium = PREMIUM_CATEGORIES.includes(user.category);
 
     if (user.category === "Regular") {
-      const usage = await useBoostForRegular(req.publicUserId);
-
-      if (!usage.subscription) {
-        return res.status(402).json({
-          success: false,
-          message: "Active subscription required to boost your profile.",
-        });
-      }
-
-      if (!usage.allowed) {
-        return res.status(429).json({
-          success: false,
-          message: "Daily profile boost limit reached for your plan.",
-        });
-      }
-
-      // For Gold plan: fixed 2-hour boosts as per subscription plan
       const subscription = await getActiveSubscriptionForUser(req.publicUserId);
       const plan = subscription ? REGULAR_PLANS[subscription.plan] : null;
 
-      if (plan && subscription.plan === "Gold") {
-        // Gold plan: fixed 2-hour duration
-        const goldHours = 2;
-        extensionMs = goldHours * 3600 * 1000;
-        totalHoursPurchased = goldHours;
-        cashCost = 0; // Free for Gold subscribers
-      } else {
-        // Silver plan doesn't have boosts (boostsPerDay: 0)
-        return res.status(403).json({
-          success: false,
-          message: "Profile boosts are not available for your subscription plan.",
-        });
-      }
-    } else if (isPremium) {
-      // Premium category users: subscription-based boost allowance
-      const { useBoostForPremium, PREMIUM_PLANS } = require("../services/subscriptionService");
-      const usage = await useBoostForPremium(req.publicUserId);
-
-      if (!usage.subscription) {
+      if (!subscription || !plan) {
         return res.status(402).json({
           success: false,
           message: "Active subscription required to boost your profile.",
         });
       }
 
-      if (!usage.allowed) {
-        return res.status(429).json({
+      if (subscription.plan === "Gold") {
+        // Gold plan: use hours-based tracking
+        // Use requested durationHours or plan's default (2 hours)
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForRegular(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
+        cashCost = 0; // Free for Gold subscribers
+      } else {
+        // Silver plan doesn't have boosts
+        return res.status(403).json({
           success: false,
-          message: "Daily profile boost limit reached for your plan.",
+          message:
+            "Profile boosts are not available for your subscription plan.",
         });
       }
-
+    } else if (isPremium) {
+      // Premium category users: subscription-based boost allowance using hours
       const subscription = await getActiveSubscriptionForUser(req.publicUserId);
       const plan = subscription ? PREMIUM_PLANS[subscription.plan] : null;
 
-      if (plan && subscription.plan === "Silver") {
-        // Silver plan: fixed 1-hour duration, can target one category
-        const silverHours = plan.boostDurationHours || 1;
-        extensionMs = silverHours * 3600 * 1000;
-        totalHoursPurchased = silverHours;
-        cashCost = 0; // Free for Silver subscribers
-        
+      if (!subscription || !plan) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to boost your profile.",
+        });
+      }
+
+      if (subscription.plan === "Silver") {
+        // Silver plan: default 1-hour duration, can target one category
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForPremium(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
         // Silver can only target one category - verify targetCategory is provided
         if (!targetCategory) {
           return res.status(400).json({
@@ -293,23 +315,47 @@ exports.boostProfile = async (req, res) => {
             message: "Target category is required for Silver plan boosts.",
           });
         }
-      } else if (plan && subscription.plan === "Gold") {
-        // Gold plan: fixed 3-hour duration, can target all categories
-        const goldHours = plan.boostDurationHours || 3;
-        extensionMs = goldHours * 3600 * 1000;
-        totalHoursPurchased = goldHours;
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
+        cashCost = 0; // Free for Silver subscribers
+      } else if (subscription.plan === "Gold") {
+        // Gold plan: default 3-hour duration, can target all categories
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForPremium(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
         cashCost = 0; // Free for Gold subscribers
       } else {
         return res.status(403).json({
           success: false,
-          message: "Profile boosts are not available for your subscription plan.",
+          message:
+            "Profile boosts are not available for your subscription plan.",
         });
       }
     } else {
       // No token fallback - subscription required for all users
       return res.status(402).json({
         success: false,
-        message: "Active subscription required to boost your profile. Please subscribe to a plan to continue.",
+        message:
+          "Active subscription required to boost your profile. Please subscribe to a plan to continue.",
       });
     }
 
@@ -329,7 +375,6 @@ exports.boostProfile = async (req, res) => {
     const totalBoosts = await ProfileBoost.count({
       where: { public_user_id: user.id },
     });
-
 
     return res.json({
       success: true,
@@ -373,15 +418,106 @@ exports.extendProfileBoost = async (req, res) => {
       });
     }
 
-    const PREMIUM_CATEGORIES = ["Sugar Mummy", "Sponsor", "Ben 10", "Urban Chics"];
-    const isRegularOrPremium = user.category === "Regular" || PREMIUM_CATEGORIES.includes(user.category);
+    const PREMIUM_CATEGORIES = [
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
+    const isRegularOrPremium =
+      user.category === "Regular" || PREMIUM_CATEGORIES.includes(user.category);
 
-    // Regular and Premium users: subscription-only system
-    // They should use their daily boost allowance instead of extending
+    // For Regular and Premium users: allow extension using daily hours allowance
     if (isRegularOrPremium) {
-      return res.status(403).json({
-        success: false,
-        message: "Boost extension is not available for subscription users. Please use your daily boost allowance to create a new boost.",
+      const {
+        additionalHours,
+        hours,
+        durationHours,
+        targetRadiusKm,
+        targetRadius,
+      } = req.body;
+
+      const now = new Date();
+
+      const boost = await ProfileBoost.findOne({
+        where: {
+          id,
+          public_user_id: req.publicUserId,
+          status: "active",
+          ends_at: { [Op.gt]: now },
+        },
+      });
+
+      if (!boost) {
+        return res.status(404).json({
+          success: false,
+          message: "Active boost not found for this user",
+        });
+      }
+
+      // Calculate requested extension hours
+      const requestedHours = Number.parseFloat(
+        additionalHours ?? hours ?? durationHours ?? 1
+      );
+      const extensionHours =
+        Number.isFinite(requestedHours) && requestedHours > 0
+          ? Math.min(requestedHours, 24) // Max 24 hours extension at once
+          : 1;
+
+      // Use hours-based allowance
+      let usage;
+      if (user.category === "Regular") {
+        usage = await useBoostHoursForRegular(req.publicUserId, extensionHours);
+      } else {
+        usage = await useBoostHoursForPremium(req.publicUserId, extensionHours);
+      }
+
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to extend boost.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: `Insufficient daily boost hours. You have ${usage.remaining.toFixed(
+            1
+          )} hours remaining, but need ${extensionHours} hours.`,
+        });
+      }
+
+      // Update boost end time
+      const extensionMs = usage.consumedHours * 3600 * 1000;
+      const currentEndsAt = new Date(boost.ends_at);
+      const baseline = currentEndsAt > now ? currentEndsAt : now;
+      const newEndsAt = new Date(baseline.getTime() + extensionMs);
+
+      // Update radius if provided
+      const radiusFallback =
+        boost.target_radius_km !== null
+          ? Number.parseFloat(boost.target_radius_km)
+          : 10;
+      const updatedRadius = sanitizeRadius(
+        targetRadiusKm ?? targetRadius ?? radiusFallback,
+        {
+          fallback: radiusFallback,
+        }
+      );
+
+      boost.target_radius_km = updatedRadius;
+      boost.ends_at = newEndsAt;
+      await boost.save();
+
+      return res.json({
+        success: true,
+        data: {
+          boost,
+          hoursExtended: usage.consumedHours,
+          remainingHours: usage.remaining,
+          endsAt: newEndsAt,
+        },
       });
     }
 
@@ -467,7 +603,6 @@ exports.extendProfileBoost = async (req, res) => {
     boost.ends_at = newEndsAt;
     await boost.save();
 
-
     return res.json({
       success: true,
       data: {
@@ -488,6 +623,219 @@ exports.extendProfileBoost = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to extend boost",
+    });
+  }
+};
+
+/**
+ * Admin endpoint to boost fake profiles
+ * Bypasses all subscription checks and allows admins to boost any user's profile
+ */
+exports.adminBoostFakeProfile = async (req, res) => {
+  try {
+    const {
+      public_user_id,
+      targetCategory,
+      targetArea,
+      targetLatitude,
+      targetLongitude,
+      targetRadiusKm,
+      targetLat,
+      targetLng,
+      targetRadius,
+      durationHours,
+    } = req.body;
+
+    // Validate required fields
+    if (!public_user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "public_user_id is required",
+      });
+    }
+
+    if (!targetCategory || !ALLOWED_BOOST_CATEGORIES.includes(targetCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or missing target category",
+      });
+    }
+
+    // Parse coordinates
+    const boostLat =
+      parseCoordinate(targetLatitude) ?? parseCoordinate(targetLat);
+    const boostLng =
+      parseCoordinate(targetLongitude) ?? parseCoordinate(targetLng);
+    const boostRadiusKm = sanitizeRadius(targetRadiusKm ?? targetRadius, {
+      min: 1,
+      max: 200,
+      fallback: 10,
+    });
+
+    if (
+      boostLat === null ||
+      boostLng === null ||
+      boostLat < -90 ||
+      boostLat > 90 ||
+      boostLng < -180 ||
+      boostLng > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Valid target latitude and longitude are required to geotarget a boost.",
+      });
+    }
+
+    // Validate duration
+    const hours = Number.parseFloat(durationHours) || 1;
+    if (hours <= 0 || hours > 24) {
+      return res.status(400).json({
+        success: false,
+        message: "Duration must be between 0.1 and 24 hours",
+      });
+    }
+
+    const normalizedTargetCounty = targetArea
+      ? normalizeCountyName(targetArea) || targetArea?.trim() || null
+      : null;
+
+    // Check if user exists
+    const user = await PublicUser.findByPk(public_user_id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const now = new Date();
+
+    // Expire any existing expired boosts
+    await ProfileBoost.update(
+      { status: "expired" },
+      {
+        where: {
+          public_user_id: user.id,
+          status: "active",
+          ends_at: { [Op.lte]: now },
+        },
+      }
+    );
+
+    // Calculate boost duration in milliseconds
+    const extensionMs = hours * 3600 * 1000;
+
+    // Create boost record (admin bypasses all subscription checks)
+    const boostRecord = await ProfileBoost.create({
+      public_user_id: user.id,
+      target_category: targetCategory,
+      target_area: normalizedTargetCounty,
+      target_lat: boostLat,
+      target_lng: boostLng,
+      target_radius_km: boostRadiusKm,
+      price_kes: 0, // Free for admin-created boosts
+      starts_at: now,
+      ends_at: new Date(now.getTime() + extensionMs),
+      status: "active",
+    });
+
+    const totalBoosts = await ProfileBoost.count({
+      where: { public_user_id: user.id },
+    });
+
+    return res.json({
+      success: true,
+      message: "Fake profile boost created successfully",
+      data: {
+        boost: boostRecord,
+        totalBoosts,
+        hoursPurchased: hours,
+        targetCounty: normalizedTargetCounty,
+        targetLatitude: boostLat,
+        targetLongitude: boostLng,
+        targetRadiusKm: boostRadiusKm,
+      },
+    });
+  } catch (err) {
+    console.error("adminBoostFakeProfile error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to boost fake profile",
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * Admin endpoint to extend fake profile boosts
+ * Bypasses all subscription checks and allows admins to extend any user's boost
+ */
+exports.adminExtendFakeBoost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { additionalHours, hours, durationHours } = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "Boost ID is required",
+      });
+    }
+
+    // Calculate requested extension hours
+    const requestedHours = Number.parseFloat(
+      additionalHours ?? hours ?? durationHours ?? 1
+    );
+    const extensionHours =
+      Number.isFinite(requestedHours) && requestedHours > 0
+        ? Math.min(requestedHours, 24) // Max 24 hours extension at once
+        : 1;
+
+    const now = new Date();
+
+    const boost = await ProfileBoost.findOne({
+      where: {
+        id,
+        status: "active",
+        ends_at: { [Op.gt]: now },
+      },
+    });
+
+    if (!boost) {
+      return res.status(404).json({
+        success: false,
+        message: "Active boost not found",
+      });
+    }
+
+    // Update boost end time (admin bypasses all checks)
+    const extensionMs = extensionHours * 3600 * 1000;
+    const currentEndsAt = new Date(boost.ends_at);
+    const baseline = currentEndsAt > now ? currentEndsAt : now;
+    const newEndsAt = new Date(baseline.getTime() + extensionMs);
+
+    await boost.update({
+      ends_at: newEndsAt,
+    });
+
+    await boost.reload();
+
+    return res.json({
+      success: true,
+      message: "Boost extended successfully",
+      data: {
+        boost: boost.toJSON(),
+        extensionHours: extensionHours,
+        newEndsAt: newEndsAt,
+      },
+    });
+  } catch (err) {
+    console.error("adminExtendFakeBoost error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to extend boost",
+      error: err.message,
     });
   }
 };

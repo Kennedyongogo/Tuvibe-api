@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const { Subscription, Notification, PublicUser } = require("../models");
+const { sendEventToUser } = require("../routes/sseRoutes");
 
 /**
  * Check for subscriptions expiring soon and send notifications
@@ -166,9 +167,28 @@ const checkAndNotifyExpiredSubscriptions = async () => {
     for (const subscription of expiredSubscriptions) {
       // Update subscription status to "expired"
       updatePromises.push(
-        subscription.update({
-          status: "expired",
-        })
+        subscription
+          .update({
+            status: "expired",
+          })
+          .then(async () => {
+            // Send SSE event for subscription expiration
+            try {
+              await subscription.reload();
+              sendEventToUser(
+                subscription.public_user_id,
+                "subscription:expired",
+                {
+                  subscription: subscription.toJSON(),
+                }
+              );
+            } catch (sseError) {
+              console.error(
+                "[SSE] Error sending subscription:expired event:",
+                sseError
+              );
+            }
+          })
       );
       subscriptionsUpdated++;
 

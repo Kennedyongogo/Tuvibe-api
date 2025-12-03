@@ -19,7 +19,10 @@ const REGULAR_PLANS = {
     premiumUnlocksPerDay: Infinity,
     maxFavourites: Infinity,
     maxUnlockedProfiles: Infinity,
-    boostsPerDay: 3,
+    boostsPerDay: 3, // Keep for backward compatibility
+    boostHoursPerDay: 6, // Total hours per day (3 boosts × 2 hours each = 6 hours total)
+    boostDurationHours: 2, // Default duration per boost (2 hours as per benefits)
+    boostTargetCategories: 3, // Can target three categories
     suggestedMatchesPerDay: 5,
     incognitoMinutesPerDay: 240,
   },
@@ -34,8 +37,9 @@ const PREMIUM_PLANS = {
     premiumUnlocksPerDay: 10,
     maxFavourites: 60,
     maxUnlockedProfiles: 60,
-    boostsPerDay: 2,
-    boostDurationHours: 1,
+    boostsPerDay: 2, // Keep for backward compatibility
+    boostHoursPerDay: 2, // Total hours per day (2 boosts × 1 hour each)
+    boostDurationHours: 1, // Default duration per boost
     boostTargetCategories: 1, // Can target one category per boost
     suggestedMatchesPerDay: 0,
     incognitoMinutesPerDay: 0,
@@ -48,8 +52,9 @@ const PREMIUM_PLANS = {
     premiumUnlocksPerDay: Infinity,
     maxFavourites: Infinity,
     maxUnlockedProfiles: Infinity,
-    boostsPerDay: 4,
-    boostDurationHours: 3,
+    boostsPerDay: 4, // Keep for backward compatibility
+    boostHoursPerDay: 12, // Total hours per day (4 boosts × 3 hours each)
+    boostDurationHours: 3, // Default duration per boost
     boostTargetCategories: Infinity, // Can target all categories
     suggestedMatchesPerDay: 10,
     incognitoMinutesPerDay: 480, // 8 hours
@@ -101,6 +106,7 @@ const getOrCreateTodayUsage = async (publicUserId) => {
       premium_unlocks_used: 0,
       boosts_used: 0,
       suggested_matches_used: 0,
+      boost_hours_used: 0,
     });
   }
 
@@ -223,7 +229,7 @@ const usePremiumUnlockForRegular = async (publicUserId) => {
   return { ...result, subscription };
 };
 
-// Boost allowance (Regular plans)
+// Boost allowance (Regular plans) - tracks count (kept for backward compatibility)
 const useBoostForRegular = async (publicUserId) => {
   const subscription = await getActiveSubscriptionForUser(publicUserId);
   const plan = getRegularPlanConfig(subscription);
@@ -246,6 +252,92 @@ const useBoostForRegular = async (publicUserId) => {
   });
 
   return { ...result, subscription };
+};
+
+// Boost hours allowance (Regular plans) - tracks hours used per day
+const useBoostHoursForRegular = async (publicUserId, requestedHours = null) => {
+  const subscription = await getActiveSubscriptionForUser(publicUserId);
+  const plan = getRegularPlanConfig(subscription);
+
+  if (!plan) {
+    return {
+      used: false,
+      allowed: false,
+      limit: 0,
+      usedHours: 0,
+      remaining: 0,
+      consumedHours: 0,
+      subscription: null,
+    };
+  }
+
+  const limit = Number.isFinite(plan.boostHoursPerDay)
+    ? plan.boostHoursPerDay
+    : 0;
+
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: 0,
+      remaining: 0,
+      consumedHours: 0,
+      subscription,
+    };
+  }
+
+  const usage = await getOrCreateTodayUsage(publicUserId);
+  const used = Number(usage.boost_hours_used || 0);
+
+  if (used >= limit) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: used,
+      remaining: 0,
+      consumedHours: 0,
+      subscription,
+    };
+  }
+
+  // If requestedHours is provided, use it; otherwise use plan's default duration
+  const defaultHours = plan.boostDurationHours || 1;
+  const desiredHours =
+    Number.isFinite(requestedHours) && requestedHours > 0
+      ? requestedHours
+      : defaultHours;
+  // Cap at plan's boostDurationHours per boost (e.g., 2 hours for Regular Gold)
+  const maxHoursPerBoost = plan.boostDurationHours || 24;
+  const cappedDesiredHours = Math.min(desiredHours, maxHoursPerBoost);
+  const available = limit - used;
+  const hoursToConsume = Math.max(0, Math.min(available, cappedDesiredHours));
+
+  if (hoursToConsume <= 0) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: used,
+      remaining: available,
+      consumedHours: 0,
+      subscription,
+    };
+  }
+
+  usage.boost_hours_used = Number((used + hoursToConsume).toFixed(2));
+  await usage.save();
+
+  return {
+    used: true,
+    allowed: true,
+    limit,
+    usedHours: usage.boost_hours_used,
+    remaining: Math.max(limit - usage.boost_hours_used, 0),
+    consumedHours: hoursToConsume,
+    subscription,
+  };
 };
 
 // Incognito allowance (Regular plans)
@@ -434,7 +526,7 @@ const usePremiumUnlockForPremium = async (publicUserId) => {
   return { ...result, subscription };
 };
 
-// Boost allowance (Premium plans)
+// Boost allowance (Premium plans) - tracks count (kept for backward compatibility)
 const useBoostForPremium = async (publicUserId) => {
   const subscription = await getActiveSubscriptionForUser(publicUserId);
   const plan = getPremiumPlanConfig(subscription);
@@ -457,6 +549,97 @@ const useBoostForPremium = async (publicUserId) => {
   });
 
   return { ...result, subscription, plan };
+};
+
+// Boost hours allowance (Premium plans) - tracks hours used per day
+const useBoostHoursForPremium = async (publicUserId, requestedHours = null) => {
+  const subscription = await getActiveSubscriptionForUser(publicUserId);
+  const plan = getPremiumPlanConfig(subscription);
+
+  if (!plan) {
+    return {
+      used: false,
+      allowed: false,
+      limit: 0,
+      usedHours: 0,
+      remaining: 0,
+      consumedHours: 0,
+      subscription: null,
+      plan: null,
+    };
+  }
+
+  const limit = Number.isFinite(plan.boostHoursPerDay)
+    ? plan.boostHoursPerDay
+    : 0;
+
+  if (!Number.isFinite(limit) || limit <= 0) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: 0,
+      remaining: 0,
+      consumedHours: 0,
+      subscription,
+      plan,
+    };
+  }
+
+  const usage = await getOrCreateTodayUsage(publicUserId);
+  const used = Number(usage.boost_hours_used || 0);
+
+  if (used >= limit) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: used,
+      remaining: 0,
+      consumedHours: 0,
+      subscription,
+      plan,
+    };
+  }
+
+  // If requestedHours is provided, use it; otherwise use plan's default duration
+  const defaultHours = plan.boostDurationHours || 1;
+  const desiredHours =
+    Number.isFinite(requestedHours) && requestedHours > 0
+      ? requestedHours
+      : defaultHours;
+  // Cap at plan's boostDurationHours per boost (e.g., 3 hours for Premium Gold)
+  const maxHoursPerBoost = plan.boostDurationHours || 24;
+  const cappedDesiredHours = Math.min(desiredHours, maxHoursPerBoost);
+  const available = limit - used;
+  const hoursToConsume = Math.max(0, Math.min(available, cappedDesiredHours));
+
+  if (hoursToConsume <= 0) {
+    return {
+      used: false,
+      allowed: false,
+      limit,
+      usedHours: used,
+      remaining: available,
+      consumedHours: 0,
+      subscription,
+      plan,
+    };
+  }
+
+  usage.boost_hours_used = Number((used + hoursToConsume).toFixed(2));
+  await usage.save();
+
+  return {
+    used: true,
+    allowed: true,
+    limit,
+    usedHours: usage.boost_hours_used,
+    remaining: Math.max(limit - usage.boost_hours_used, 0),
+    consumedHours: hoursToConsume,
+    subscription,
+    plan,
+  };
 };
 
 // Incognito allowance (Premium plans)
@@ -578,6 +761,7 @@ module.exports = {
   useWhoViewedForRegular,
   usePremiumUnlockForRegular,
   useBoostForRegular,
+  useBoostHoursForRegular,
   useIncognitoMinutesForRegular,
   useSuggestedMatchesForRegular,
   // Premium category functions
@@ -585,6 +769,7 @@ module.exports = {
   useWhoViewedForPremium,
   usePremiumUnlockForPremium,
   useBoostForPremium,
+  useBoostHoursForPremium,
   useIncognitoMinutesForPremium,
   useSuggestedMatchesForPremium,
 };

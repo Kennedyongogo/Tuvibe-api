@@ -24,6 +24,11 @@ if (
 const {
   useIncognitoMinutesForRegular,
   useIncognitoMinutesForPremium,
+  useBoostHoursForRegular,
+  useBoostHoursForPremium,
+  REGULAR_PLANS,
+  PREMIUM_PLANS,
+  getActiveSubscriptionForUser,
 } = require("../services/subscriptionService");
 const {
   syncGoldVerificationBadge,
@@ -32,9 +37,31 @@ const {
   syncPremiumBadge,
   PREMIUM_CATEGORIES,
 } = require("../services/premiumBadgeService");
-const {
-  getActiveSubscriptionForUser,
-} = require("../services/subscriptionService");
+const { ProfileBoost } = require("../models");
+const { normalizeCountyName } = require("../config/kenyaCounties");
+const { sendEventToUser } = require("../routes/sseRoutes");
+
+const ALLOWED_BOOST_CATEGORIES = [
+  "Regular",
+  "Sugar Mummy",
+  "Sponsor",
+  "Ben 10",
+  "Urban Chics",
+];
+
+// Helper functions for boost
+const parseCoordinate = (value) => {
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const sanitizeRadius = (value, { min = 1, max = 200, fallback = 10 } = {}) => {
+  const numeric = Number.parseFloat(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return fallback;
+  }
+  return Math.min(Math.max(numeric, min), max);
+};
 
 const buildAuthHeader = () => {
   if (!PAYSTACK_SECRET_KEY) {
@@ -164,6 +191,19 @@ exports.initializeSubscription = async (req, res) => {
           // Premium users: sync premium badge (Silver or Gold)
           await syncPremiumBadge(user);
         }
+      }
+
+      // Send SSE event for subscription creation
+      try {
+        await subscription.reload();
+        sendEventToUser(req.publicUserId, "subscription:created", {
+          subscription: subscription.toJSON(),
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending subscription:created event:",
+          sseError
+        );
       }
 
       return res.status(200).json({
@@ -376,6 +416,19 @@ exports.verifySubscription = async (req, res) => {
           await syncPremiumBadge(user);
         }
       }
+
+      // Send SSE event for subscription creation
+      try {
+        await subscription.reload();
+        sendEventToUser(userId, "subscription:created", {
+          subscription: subscription.toJSON(),
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending subscription:created event:",
+          sseError
+        );
+      }
     } else if (subscription.status !== "active") {
       await subscription.update({
         status: "active",
@@ -397,6 +450,19 @@ exports.verifySubscription = async (req, res) => {
           // Premium users: sync premium badge (Silver or Gold)
           await syncPremiumBadge(user);
         }
+      }
+
+      // Send SSE event for subscription update
+      try {
+        await subscription.reload();
+        sendEventToUser(userId, "subscription:updated", {
+          subscription: subscription.toJSON(),
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending subscription:updated event:",
+          sseError
+        );
       }
     }
 
@@ -683,6 +749,49 @@ exports.getMySubscription = async (req, res) => {
       order: [["starts_at", "ASC"]],
     });
 
+    // Get user to determine category
+    const user = await PublicUser.findByPk(userId, {
+      attributes: ["category"],
+    });
+
+    // Get boost hours information based on plan
+    let boostHoursInfo = null;
+    if (user) {
+      const isPremium = PREMIUM_CATEGORIES.includes(user.category);
+      const planConfig = isPremium
+        ? PREMIUM_PLANS[subscription.plan]
+        : REGULAR_PLANS[subscription.plan];
+
+      if (planConfig) {
+        // Get today's usage to show remaining hours
+        const { SubscriptionUsage } = require("../models");
+        const todayStr = new Date().toISOString().slice(0, 10);
+        const todayUsage = await SubscriptionUsage.findOne({
+          where: {
+            public_user_id: userId,
+            usage_date: todayStr,
+          },
+        });
+
+        const usedHours = todayUsage
+          ? Number(todayUsage.boost_hours_used || 0)
+          : 0;
+        const totalHours = Number.isFinite(planConfig.boostHoursPerDay)
+          ? planConfig.boostHoursPerDay
+          : 0;
+        const remainingHours = Math.max(0, totalHours - usedHours);
+        const defaultDuration = planConfig.boostDurationHours || 1;
+
+        boostHoursInfo = {
+          totalHoursPerDay: totalHours,
+          usedHours: usedHours,
+          remainingHours: remainingHours,
+          defaultDurationPerBoost: defaultDuration,
+          maxDurationPerBoost: defaultDuration, // Same as default for now
+        };
+      }
+    }
+
     return res.status(200).json({
       success: true,
       data: {
@@ -705,6 +814,7 @@ exports.getMySubscription = async (req, res) => {
               expires_at: pendingDowngrade.expires_at,
             }
           : null,
+        boostHours: boostHoursInfo,
       },
     });
   } catch (err) {
@@ -810,6 +920,19 @@ exports.upgradeSubscription = async (req, res) => {
         }
       } else if (PREMIUM_CATEGORIES.includes(user.category)) {
         await syncPremiumBadge(user);
+      }
+
+      // Send SSE event for subscription update
+      try {
+        await activeSubscription.reload();
+        sendEventToUser(userId, "subscription:updated", {
+          subscription: activeSubscription.toJSON(),
+        });
+      } catch (sseError) {
+        console.error(
+          "[SSE] Error sending subscription:updated event:",
+          sseError
+        );
       }
 
       return res.status(200).json({
@@ -992,6 +1115,19 @@ exports.verifyUpgrade = async (req, res) => {
       }
     } else if (PREMIUM_CATEGORIES.includes(user.category)) {
       await syncPremiumBadge(user);
+    }
+
+    // Send SSE event for subscription update
+    try {
+      await subscription.reload();
+      sendEventToUser(userId, "subscription:updated", {
+        subscription: subscription.toJSON(),
+      });
+    } catch (sseError) {
+      console.error(
+        "[SSE] Error sending subscription:updated event:",
+        sseError
+      );
     }
 
     return res.status(200).json({
@@ -1253,6 +1389,501 @@ exports.checkSubscriptionExpirations = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to check subscription expirations",
+      error: err.message,
+    });
+  }
+};
+
+// Profile boost functions - subscription-based only (no tokens)
+exports.boostProfile = async (req, res) => {
+  try {
+    const {
+      targetCategory,
+      targetArea,
+      targetLatitude,
+      targetLongitude,
+      targetRadiusKm,
+      targetLat,
+      targetLng,
+      targetRadius,
+      durationHours,
+      hours,
+      purchaseHours,
+    } = req.body;
+
+    if (!targetCategory || !ALLOWED_BOOST_CATEGORIES.includes(targetCategory)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or missing target category",
+      });
+    }
+
+    const boostLat =
+      parseCoordinate(targetLatitude) ?? parseCoordinate(targetLat);
+    const boostLng =
+      parseCoordinate(targetLongitude) ?? parseCoordinate(targetLng);
+    const boostRadiusKm = sanitizeRadius(targetRadiusKm ?? targetRadius, {
+      min: 1,
+      max: 200,
+      fallback: 10,
+    });
+
+    if (
+      boostLat === null ||
+      boostLng === null ||
+      boostLat < -90 ||
+      boostLat > 90 ||
+      boostLng < -180 ||
+      boostLng > 180
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Valid target latitude and longitude are required to geotarget a boost.",
+      });
+    }
+
+    const normalizedTargetCounty = targetArea
+      ? normalizeCountyName(targetArea) || targetArea?.trim() || null
+      : null;
+
+    const user = await PublicUser.findByPk(req.publicUserId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const now = new Date();
+
+    await ProfileBoost.update(
+      { status: "expired" },
+      {
+        where: {
+          public_user_id: user.id,
+          status: "active",
+          ends_at: { [Op.lte]: now },
+        },
+      }
+    );
+
+    // Subscription-based boost allowance (no tokens)
+    let extensionMs = 0;
+    let totalHoursPurchased = 0;
+
+    const isPremium = PREMIUM_CATEGORIES.includes(user.category);
+
+    if (user.category === "Regular") {
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan = subscription ? REGULAR_PLANS[subscription.plan] : null;
+
+      if (!subscription || !plan) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to boost your profile.",
+        });
+      }
+
+      if (subscription.plan === "Gold") {
+        // Gold plan: use hours-based tracking
+        // Use requested durationHours or plan's default (2 hours)
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForRegular(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
+      } else {
+        // Silver plan doesn't have boosts
+        return res.status(403).json({
+          success: false,
+          message:
+            "Profile boosts are not available for your subscription plan.",
+        });
+      }
+    } else if (isPremium) {
+      // Premium category users: subscription-based boost allowance using hours
+      const subscription = await getActiveSubscriptionForUser(req.publicUserId);
+      const plan = subscription ? PREMIUM_PLANS[subscription.plan] : null;
+
+      if (!subscription || !plan) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to boost your profile.",
+        });
+      }
+
+      if (subscription.plan === "Silver") {
+        // Silver plan: default 1-hour duration, can target one category
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForPremium(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
+        // Silver can only target one category - verify targetCategory is provided
+        if (!targetCategory) {
+          return res.status(400).json({
+            success: false,
+            message: "Target category is required for Silver plan boosts.",
+          });
+        }
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
+      } else if (subscription.plan === "Gold") {
+        // Gold plan: default 3-hour duration, can target all categories
+        const requestedHours = Number.parseFloat(
+          durationHours ?? hours ?? purchaseHours
+        );
+        const usage = await useBoostHoursForPremium(
+          req.publicUserId,
+          Number.isFinite(requestedHours) && requestedHours > 0
+            ? requestedHours
+            : null // null will use plan's default
+        );
+
+        if (!usage.allowed) {
+          return res.status(429).json({
+            success: false,
+            message: `Daily profile boost hours limit reached. You have ${usage.remaining.toFixed(
+              1
+            )} hours remaining.`,
+          });
+        }
+
+        extensionMs = usage.consumedHours * 3600 * 1000;
+        totalHoursPurchased = usage.consumedHours;
+      } else {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Profile boosts are not available for your subscription plan.",
+        });
+      }
+    } else {
+      // Subscription required for all users
+      return res.status(402).json({
+        success: false,
+        message:
+          "Active subscription required to boost your profile. Please subscribe to a plan to continue.",
+      });
+    }
+
+    const boostRecord = await ProfileBoost.create({
+      public_user_id: user.id,
+      target_category: targetCategory,
+      target_area: normalizedTargetCounty,
+      target_lat: boostLat,
+      target_lng: boostLng,
+      target_radius_km: boostRadiusKm,
+      price_kes: 0, // Free for subscribers
+      starts_at: now,
+      ends_at: new Date(now.getTime() + extensionMs),
+      status: "active",
+    });
+
+    const totalBoosts = await ProfileBoost.count({
+      where: { public_user_id: user.id },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        boost: boostRecord,
+        totalBoosts,
+        hoursPurchased: totalHoursPurchased,
+        targetCounty: normalizedTargetCounty,
+        targetLatitude: boostLat,
+        targetLongitude: boostLng,
+        targetRadiusKm: boostRadiusKm,
+      },
+    });
+  } catch (err) {
+    console.error("boostProfile error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to boost profile",
+      error: err.message,
+    });
+  }
+};
+
+exports.extendProfileBoost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await PublicUser.findByPk(req.publicUserId, {
+      attributes: ["category"],
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const isRegularOrPremium =
+      user.category === "Regular" || PREMIUM_CATEGORIES.includes(user.category);
+
+    // For Regular and Premium users: allow extension using daily hours allowance
+    if (isRegularOrPremium) {
+      const {
+        additionalHours,
+        hours,
+        durationHours,
+        targetRadiusKm,
+        targetRadius,
+      } = req.body;
+
+      const now = new Date();
+
+      const boost = await ProfileBoost.findOne({
+        where: {
+          id,
+          public_user_id: req.publicUserId,
+          status: "active",
+          ends_at: { [Op.gt]: now },
+        },
+      });
+
+      if (!boost) {
+        return res.status(404).json({
+          success: false,
+          message: "Active boost not found for this user",
+        });
+      }
+
+      // Calculate requested extension hours
+      const requestedHours = Number.parseFloat(
+        additionalHours ?? hours ?? durationHours ?? 1
+      );
+      const extensionHours =
+        Number.isFinite(requestedHours) && requestedHours > 0
+          ? Math.min(requestedHours, 24) // Max 24 hours extension at once
+          : 1;
+
+      // Use hours-based allowance
+      let usage;
+      if (user.category === "Regular") {
+        usage = await useBoostHoursForRegular(req.publicUserId, extensionHours);
+      } else {
+        usage = await useBoostHoursForPremium(req.publicUserId, extensionHours);
+      }
+
+      if (!usage.subscription) {
+        return res.status(402).json({
+          success: false,
+          message: "Active subscription required to extend boost.",
+        });
+      }
+
+      if (!usage.allowed) {
+        return res.status(429).json({
+          success: false,
+          message: `Insufficient daily boost hours. You have ${usage.remaining.toFixed(
+            1
+          )} hours remaining, but need ${extensionHours} hours.`,
+        });
+      }
+
+      // Update boost end time
+      const extensionMs = usage.consumedHours * 3600 * 1000;
+      const currentEndsAt = new Date(boost.ends_at);
+      const baseline = currentEndsAt > now ? currentEndsAt : now;
+      const newEndsAt = new Date(baseline.getTime() + extensionMs);
+
+      // Update radius if provided
+      const radiusFallback =
+        boost.target_radius_km !== null
+          ? Number.parseFloat(boost.target_radius_km)
+          : 10;
+      const updatedRadius = sanitizeRadius(
+        targetRadiusKm ?? targetRadius ?? radiusFallback,
+        {
+          fallback: radiusFallback,
+        }
+      );
+
+      boost.target_radius_km = updatedRadius;
+      boost.ends_at = newEndsAt;
+      await boost.save();
+
+      return res.json({
+        success: true,
+        data: {
+          boost,
+          hoursExtended: usage.consumedHours,
+          remainingHours: usage.remaining,
+          endsAt: newEndsAt,
+        },
+      });
+    }
+
+    // For other users (if any), subscription is required
+    return res.status(402).json({
+      success: false,
+      message: "Active subscription required to extend boost.",
+    });
+  } catch (err) {
+    console.error("extendProfileBoost error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to extend boost",
+      error: err.message,
+    });
+  }
+};
+
+// Admin endpoint to get user's subscription and boost status
+exports.adminGetUserSubscription = async (req, res) => {
+  try {
+    const { public_user_id } = req.params;
+
+    if (!public_user_id) {
+      return res.status(400).json({
+        success: false,
+        message: "public_user_id is required",
+      });
+    }
+
+    const user = await PublicUser.findByPk(public_user_id, {
+      attributes: ["id", "category"],
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const subscription = await getActiveSubscriptionForUser(public_user_id);
+
+    if (!subscription) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          hasSubscription: false,
+          subscription: null,
+          pendingDowngrade: null,
+          boostHours: null,
+        },
+      });
+    }
+
+    // Calculate remaining days
+    const now = new Date();
+    const expiresAt = new Date(subscription.expires_at);
+    const timeDiff = expiresAt.getTime() - now.getTime();
+    const remainingDays = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+    // Check for pending downgrade
+    const pendingDowngrade = await Subscription.findOne({
+      where: {
+        public_user_id: public_user_id,
+        status: "pending",
+        starts_at: {
+          [Op.gte]: expiresAt,
+        },
+      },
+      order: [["starts_at", "ASC"]],
+    });
+
+    // Get boost hours information based on plan
+    let boostHoursInfo = null;
+    const isPremium = PREMIUM_CATEGORIES.includes(user.category);
+    const planConfig = isPremium
+      ? PREMIUM_PLANS[subscription.plan]
+      : REGULAR_PLANS[subscription.plan];
+
+    if (planConfig) {
+      // Get today's usage to show remaining hours
+      const { SubscriptionUsage } = require("../models");
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayUsage = await SubscriptionUsage.findOne({
+        where: {
+          public_user_id: public_user_id,
+          usage_date: todayStr,
+        },
+      });
+
+      const usedHours = todayUsage
+        ? Number(todayUsage.boost_hours_used || 0)
+        : 0;
+      const totalHours = Number.isFinite(planConfig.boostHoursPerDay)
+        ? planConfig.boostHoursPerDay
+        : 0;
+      const remainingHours = Math.max(0, totalHours - usedHours);
+      const defaultDuration = planConfig.boostDurationHours || 1;
+
+      boostHoursInfo = {
+        totalHoursPerDay: totalHours,
+        usedHours: usedHours,
+        remainingHours: remainingHours,
+        defaultDurationPerBoost: defaultDuration,
+        maxDurationPerBoost: defaultDuration,
+      };
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        hasSubscription: true,
+        subscription: {
+          id: subscription.id,
+          plan: subscription.plan,
+          amount: parseFloat(subscription.amount),
+          status: subscription.status,
+          starts_at: subscription.starts_at,
+          expires_at: subscription.expires_at,
+          remainingDays: Math.max(0, remainingDays),
+          auto_renew_enabled: subscription.auto_renew_enabled || false,
+          isCancelled: subscription.status === "cancelled",
+        },
+        pendingDowngrade: pendingDowngrade
+          ? {
+              plan: pendingDowngrade.plan,
+              starts_at: pendingDowngrade.starts_at,
+              expires_at: pendingDowngrade.expires_at,
+            }
+          : null,
+        boostHours: boostHoursInfo,
+      },
+    });
+  } catch (err) {
+    console.error("adminGetUserSubscription error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user subscription status",
       error: err.message,
     });
   }

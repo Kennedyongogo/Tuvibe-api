@@ -25,7 +25,15 @@ const {
 } = require("../controllers/ratingTestimonialController");
 const {
   adminCreateFakeSubscription,
+  adminGetUserSubscription,
 } = require("../controllers/subscriptionController");
+const {
+  adminBoostFakeProfile,
+  adminExtendFakeBoost,
+} = require("../controllers/tokenController");
+const {
+  adminGetUserBoostStatus,
+} = require("../controllers/publicUserController");
 const {
   authenticateAdmin,
   requireSuperAdmin,
@@ -75,6 +83,28 @@ router.post(
   authenticateAdmin,
   requireAdminOrHigher,
   adminCreateFakeSubscription
+);
+router.post(
+  "/boosts/create-fake",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  adminBoostFakeProfile
+);
+router.post(
+  "/boosts/:id/extend",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  adminExtendFakeBoost
+);
+router.get(
+  "/public-users/:public_user_id/subscription",
+  authenticateAdmin,
+  adminGetUserSubscription
+);
+router.get(
+  "/public-users/:public_user_id/boosts/status",
+  authenticateAdmin,
+  adminGetUserBoostStatus
 );
 router.get("/", authenticateAdmin, getAllAdmins);
 router.get("/:id", authenticateAdmin, getAdminById);

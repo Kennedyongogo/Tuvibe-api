@@ -185,9 +185,7 @@ exports.getApprovedTestimonials = async (req, res) => {
     const testimonials = await RatingTestimonial.findAll({
       where: {
         is_approved: true,
-        testimonial: {
-          [Op.ne]: null, // Only return testimonials with text
-        },
+        // Include both ratings with and without testimonials
       },
       include: [
         {

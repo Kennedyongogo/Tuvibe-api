@@ -894,7 +894,7 @@ const getDashboardStats = async (req, res) => {
       todayPremiumUnlocks: await SubscriptionUsage.sum("premium_unlocks_used", {
         where: { usage_date: todayStr },
       }).then((v) => Number(v || 0)),
-      todayBoosts: await SubscriptionUsage.sum("boosts_used", {
+      todayBoosts: await SubscriptionUsage.sum("boost_hours_used", {
         where: { usage_date: todayStr },
       }).then((v) => Number(v || 0)),
       todaySuggestedMatches: await SubscriptionUsage.sum(
@@ -929,7 +929,7 @@ const getDashboardStats = async (req, res) => {
           usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
         },
       }).then((v) => Number(v || 0)),
-      weekBoosts: await SubscriptionUsage.sum("boosts_used", {
+      weekBoosts: await SubscriptionUsage.sum("boost_hours_used", {
         where: {
           usage_date: { [Op.gte]: thisWeek.toISOString().slice(0, 10) },
         },
@@ -954,7 +954,7 @@ const getDashboardStats = async (req, res) => {
           usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
         },
       }).then((v) => Number(v || 0)),
-      monthBoosts: await SubscriptionUsage.sum("boosts_used", {
+      monthBoosts: await SubscriptionUsage.sum("boost_hours_used", {
         where: {
           usage_date: { [Op.gte]: thisMonth.toISOString().slice(0, 10) },
         },
