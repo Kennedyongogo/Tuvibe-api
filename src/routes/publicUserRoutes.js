@@ -14,6 +14,7 @@ const {
 // Auth
 router.post("/register", uploadProfileImage, handleUploadError, ctrl.register);
 router.post("/login", ctrl.login);
+router.post("/auth/google", ctrl.googleAuth);
 router.post("/request-otp", ctrl.requestOtp);
 router.post("/verify-otp", ctrl.verifyOtp);
 router.post("/forgot-password", ctrl.forgotPassword);

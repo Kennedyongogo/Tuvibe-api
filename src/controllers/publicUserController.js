@@ -2,6 +2,7 @@ const nodemailer = require("nodemailer");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Op, Sequelize } = require("sequelize");
+const { OAuth2Client } = require("google-auth-library");
 const config = require("../config/config");
 const {
   PublicUser,
@@ -311,6 +312,23 @@ exports.login = async (req, res) => {
       return res
         .status(401)
         .json({ success: false, message: "Invalid credentials" });
+
+    // Check if user signed up with Google
+    if (user.auth_provider === "google") {
+      return res.status(401).json({
+        success: false,
+        message: "Please sign in with Google",
+      });
+    }
+
+    // Check if password exists (for local users)
+    if (!user.password) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials",
+      });
+    }
+
     const ok = await bcrypt.compare(password, user.password);
     if (!ok)
       return res
@@ -548,6 +566,161 @@ exports.verifyOtp = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to verify OTP" });
+  }
+};
+
+exports.googleAuth = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google ID token is required",
+      });
+    }
+
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    let ticket;
+    try {
+      ticket = await client.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid Google token",
+      });
+    }
+
+    const payload = ticket.getPayload();
+    const { sub: googleId, email, name, picture } = payload;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email not provided by Google",
+      });
+    }
+
+    // Check if user exists by google_id or email
+    let user = await PublicUser.findOne({
+      where: {
+        [Op.or]: [{ google_id: googleId }, { email }],
+      },
+    });
+
+    const now = new Date();
+
+    if (user) {
+      // User exists - update Google info if needed and log in
+      const updateData = {
+        logged_in_at: now,
+        logged_out_at: null,
+        is_online: true,
+        last_seen_at: null,
+        auth_provider: "google",
+        google_id: googleId,
+      };
+
+      // Update name if provided and different
+      if (name && name !== user.name) {
+        updateData.name = name;
+      }
+      // Only update photo from Google if user doesn't have a photo yet
+      // This preserves user's manually uploaded profile photo
+      if (picture && !user.photo) {
+        updateData.photo = picture;
+      }
+
+      await user.update(updateData);
+    } else {
+      // New user - create account
+      // Generate a unique username from email
+      const baseUsername = email.split("@")[0];
+      let username = baseUsername;
+      let counter = 1;
+      while (await PublicUser.findOne({ where: { username } })) {
+        username = `${baseUsername}${counter}`;
+        counter++;
+      }
+
+      // For Google users, we'll need phone number later (make it optional for now or use a placeholder)
+      // Note: You may want to require phone number after Google sign-in
+      const defaultPhone = `google_${googleId.substring(0, 10)}`;
+
+      user = await PublicUser.create({
+        name: name || email.split("@")[0],
+        username,
+        email,
+        phone: defaultPhone, // You may want to require this later
+        password: null, // No password for Google users
+        google_id: googleId,
+        auth_provider: "google",
+        photo: picture || null,
+        logged_in_at: now,
+        is_online: true,
+        // Note: Age verification will need to be handled separately for Google users
+        // You may want to prompt for birth year after initial sign-up
+      });
+    }
+
+    // Age verification check for Google users
+    // Allow Google users to sign in even without age verification initially
+    // They'll need to complete their profile later
+    let resolvedBirthYear = user.birth_year || null;
+    let adultCheck = null;
+    let needsProfileCompletion = false;
+
+    if (resolvedBirthYear !== null && resolvedBirthYear !== undefined) {
+      adultCheck = isAdultFromBirthYear(resolvedBirthYear);
+    }
+
+    if (adultCheck === null && user.age !== undefined && user.age !== null) {
+      adultCheck = isAdultFromAge(user.age);
+      if (
+        adultCheck !== null &&
+        resolvedBirthYear === null &&
+        adultCheck === true
+      ) {
+        const derivedBirthYear = deriveBirthYearFromAge(user.age);
+        if (derivedBirthYear !== null) {
+          resolvedBirthYear = derivedBirthYear;
+        }
+      }
+    }
+
+    // If no age verification, allow sign-in but flag for profile completion
+    if (adultCheck === null) {
+      needsProfileCompletion = true;
+      // Don't block - allow them to sign in and complete profile later
+    } else if (adultCheck === false) {
+      // Still block underage users
+      return res.status(403).json({
+        success: false,
+        message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to access TuVibe.`,
+      });
+    }
+
+    const token = signPublicJwt(user.id);
+    const formattedUser = formatUserForResponse(user);
+    return res.json({
+      success: true,
+      data: {
+        token,
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
+        needsProfileCompletion, // Flag to indicate profile needs completion
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Google authentication failed",
+    });
   }
 };
 
@@ -1238,6 +1411,20 @@ exports.updateMe = async (req, res) => {
           message: "Invalid year of birth or age provided",
         });
       }
+
+      // Verify age when birth_year is provided
+      const adultCheck = isAdultFromBirthYear(requestedBirthYear);
+      if (adultCheck === null || adultCheck === false) {
+        console.warn("Profile update blocked for underage user attempt:", {
+          userId: req.publicUserId,
+          birthYear: requestedBirthYear,
+        });
+        return res.status(403).json({
+          success: false,
+          message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to use TuVibe.`,
+        });
+      }
+
       updates.birth_year = requestedBirthYear;
       const computedAge = computeAgeFromBirthYear(requestedBirthYear);
       updates.age = computedAge !== null ? computedAge : null;
@@ -2801,8 +2988,19 @@ exports.deleteAccount = async (req, res) => {
       });
     }
 
-    // Optional password confirmation for security
-    if (password) {
+    // Password confirmation for security (skip for Google users who don't have passwords)
+    if (user.auth_provider === "google") {
+      // Google users don't have passwords, so skip password verification
+      // The JWT token authentication is sufficient for security
+    } else if (password) {
+      // For local users, require password confirmation
+      if (!user.password) {
+        await transaction.rollback();
+        return res.status(401).json({
+          success: false,
+          message: "Password is required to delete your account.",
+        });
+      }
       const isPasswordValid = await bcrypt.compare(password, user.password);
       if (!isPasswordValid) {
         await transaction.rollback();
@@ -2812,6 +3010,13 @@ exports.deleteAccount = async (req, res) => {
             "Invalid password. Please provide the correct password to delete your account.",
         });
       }
+    } else {
+      // Local users must provide password
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Password is required to delete your account.",
+      });
     }
 
     // Delete related data in proper order (respecting foreign key constraints)
