@@ -3,8 +3,26 @@ const fetch = (...args) =>
   import("node-fetch").then(({ default: fetchFn }) => fetchFn(...args));
 require("dotenv").config();
 const { Op } = require("sequelize");
+const bcrypt = require("bcrypt");
+const path = require("path");
+const jwt = require("jsonwebtoken");
+const config = require("../config/config");
 
 const { Subscription, PublicUser } = require("../models");
+const { validatePhoneNumber } = require("../utils/phone");
+const {
+  extractBirthYearFromPayload,
+  birthYearProvided,
+  isAdultFromBirthYear,
+  MIN_PUBLIC_USER_AGE,
+  formatUserForResponse,
+} = require("../utils/userProfile");
+
+const signPublicJwt = (userId) => {
+  return jwt.sign({ id: userId, type: "public" }, config.jwtSecret, {
+    expiresIn: "7d",
+  });
+};
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_CURRENCY = process.env.PAYSTACK_CURRENCY || "KES";
@@ -131,6 +149,297 @@ const calculateProratedAmount = (currentPlanPrice, newPlanPrice, expiresAt) => {
   const proratedAmount = dailyDifference * remainingDays;
 
   return Math.max(0, Math.round(proratedAmount * 100) / 100); // Round to 2 decimal places, ensure non-negative
+};
+
+// Initialize subscription with registration data (payment before account creation)
+exports.initializeSubscriptionWithRegistration = async (req, res) => {
+  try {
+    const {
+      amount,
+      plan,
+      name,
+      username,
+      gender,
+      phone,
+      email,
+      password,
+      latitude,
+      longitude,
+      bio,
+      category,
+      birth_year,
+      age,
+    } = req.body;
+
+    // Validate subscription plan
+    const normalizedPlan = normalizePlan(plan);
+    if (!normalizedPlan) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid plan. Allowed values are Silver or Gold.",
+      });
+    }
+
+    if (!amount) {
+      return res.status(400).json({
+        success: false,
+        message: "Amount is required",
+      });
+    }
+
+    // Validate registration data
+    const normalizedUsername =
+      typeof username === "string" ? username.trim() : "";
+    if (!name || !normalizedUsername || !phone || !email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required registration fields" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Profile image is required to register.",
+      });
+    }
+
+    // Validate phone number
+    const {
+      valid: isPhoneValid,
+      normalized: normalizedPhone,
+      message: phoneValidationMessage,
+    } = validatePhoneNumber(phone);
+
+    if (!isPhoneValid) {
+      return res.status(400).json({
+        success: false,
+        message: phoneValidationMessage,
+      });
+    }
+
+    // Check if user already exists
+    const exists = await PublicUser.findOne({
+      where: {
+        [Op.or]: [
+          { email },
+          { phone: normalizedPhone },
+          { username: normalizedUsername },
+        ],
+      },
+    });
+    if (exists) {
+      return res.status(409).json({
+        success: false,
+        message: "Email, phone, or username already in use",
+      });
+    }
+
+    // Validate birth year/age
+    if (!birthYearProvided(req.body)) {
+      return res.status(400).json({
+        success: false,
+        message: "Age confirmation is required to create an account.",
+      });
+    }
+
+    const birthYear = extractBirthYearFromPayload(req.body);
+
+    if (birthYearProvided(req.body) && birthYear === null) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid year of birth or age provided",
+      });
+    }
+
+    if (birthYear !== null) {
+      const adultCheck = isAdultFromBirthYear(birthYear);
+      if (adultCheck === null || adultCheck === false) {
+        return res.status(403).json({
+          success: false,
+          message: `You must be at least ${MIN_PUBLIC_USER_AGE} years old to join TuVibe.`,
+        });
+      }
+    }
+
+    // Validate and normalize category
+    const ALLOWED_CATEGORIES = [
+      "Regular",
+      "Sugar Mummy",
+      "Sponsor",
+      "Ben 10",
+      "Urban Chics",
+    ];
+    const normalizedCategory =
+      typeof category === "string" && ALLOWED_CATEGORIES.includes(category)
+        ? category
+        : "Regular";
+
+    // Store photo path
+    const photoPath = req.file ? `profiles/${req.file.filename}` : null;
+
+    // Prepare registration data for metadata (exclude password - we'll hash it later)
+    const registrationData = {
+      name,
+      username: normalizedUsername,
+      gender,
+      category: normalizedCategory,
+      phone: normalizedPhone,
+      email,
+      password: await bcrypt.hash(password, 10), // Hash password before storing in metadata
+      latitude,
+      longitude,
+      bio,
+      photo: photoPath,
+      birth_year: birthYear,
+    };
+
+    let paystackAmount;
+    try {
+      paystackAmount = toPaystackAmountFromMajor(amount);
+    } catch (conversionErr) {
+      console.error("initializeSubscriptionWithRegistration amount error:", conversionErr);
+      return res.status(400).json({
+        success: false,
+        message: conversionErr.message,
+      });
+    }
+
+    if (PAYSTACK_BYPASS) {
+      // In bypass mode, create account and subscription immediately
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      
+      const userData = {
+        name,
+        username: normalizedUsername,
+        gender,
+        category: normalizedCategory,
+        phone: normalizedPhone,
+        email,
+        password: registrationData.password,
+        latitude,
+        longitude,
+        logged_in_at: now,
+        logged_out_at: null,
+        is_online: true,
+        last_seen_at: null,
+      };
+
+      if (bio) {
+        userData.bio = bio;
+        userData.bio_moderation_status = "pending";
+      }
+
+      if (photoPath) {
+        userData.photo = photoPath;
+        userData.photo_moderation_status = "pending";
+      }
+
+      if (birthYear !== null) {
+        userData.birth_year = birthYear;
+        const { computeAgeFromBirthYear } = require("../utils/userProfile");
+        const computedAge = computeAgeFromBirthYear(birthYear);
+        if (computedAge !== null) {
+          userData.age = computedAge;
+        }
+      }
+
+      const user = await PublicUser.create(userData);
+      const reference = `sub-dev-${randomUUID()}`;
+
+      const subscription = await Subscription.create({
+        public_user_id: user.id,
+        plan: normalizedPlan,
+        amount,
+        currency: PAYSTACK_CURRENCY,
+        reference,
+        status: "active",
+        starts_at: now,
+        expires_at: expiresAt,
+      });
+
+      // Sync badges
+      if (user.category === "Regular") {
+        if (normalizedPlan === "Gold") {
+          await syncGoldVerificationBadge(user);
+        }
+      } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+        await syncPremiumBadge(user);
+      }
+
+      const token = signPublicJwt(user.id);
+      const formattedUser = formatUserForResponse(user);
+
+      return res.status(200).json({
+        success: true,
+        bypassed: true,
+        authorization_url: null,
+        reference,
+        currency: PAYSTACK_CURRENCY,
+        subscription,
+        token,
+        user: {
+          ...formattedUser,
+          password: undefined,
+        },
+      });
+    }
+
+    // Initialize Paystack payment with registration data in metadata
+    const response = await fetch(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        method: "POST",
+        headers: buildAuthHeader(),
+        body: JSON.stringify({
+          email,
+          amount: paystackAmount,
+          currency: PAYSTACK_CURRENCY,
+          metadata: {
+            type: "subscription_with_registration",
+            plan: normalizedPlan,
+            registrationData: JSON.stringify(registrationData),
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    if (!response.ok || !data?.status) {
+      console.error("initializeSubscriptionWithRegistration response error:", data);
+      return res.status(400).json({
+        success: false,
+        message: data?.message || "Paystack error",
+      });
+    }
+
+    const reference = data.data.reference;
+    const paystackResponseAmount = data.data.amount || paystackAmount;
+    const currency = data.data.currency || PAYSTACK_CURRENCY;
+
+    if (!reference) {
+      console.error("initializeSubscriptionWithRegistration missing reference:", data.data);
+      return res.status(400).json({
+        success: false,
+        message: "Payment reference not received from Paystack",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      authorization_url: data.data.authorization_url,
+      reference,
+      paystack_amount: Number(paystackResponseAmount),
+      currency,
+      access_code: data.data.access_code,
+    });
+  } catch (err) {
+    console.error("initializeSubscriptionWithRegistration error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Subscription initialization with registration failed",
+    });
+  }
 };
 
 exports.initializeSubscription = async (req, res) => {
@@ -364,7 +673,85 @@ exports.verifySubscription = async (req, res) => {
     }
 
     const metadata = data.data.metadata || {};
-    const userId = req.publicUserId || metadata.userId;
+    let userId = req.publicUserId || metadata.userId;
+
+    // Check if this is a subscription with registration
+    let registrationData = null;
+    if (metadata.type === "subscription_with_registration" && metadata.registrationData) {
+      try {
+        registrationData = JSON.parse(metadata.registrationData);
+      } catch (parseErr) {
+        console.error("Failed to parse registration data from metadata:", parseErr);
+      }
+    }
+
+    // If registration data exists, create account first
+    if (registrationData && !userId) {
+      try {
+        const now = new Date();
+        const userData = {
+          name: registrationData.name,
+          username: registrationData.username,
+          gender: registrationData.gender,
+          category: registrationData.category,
+          phone: registrationData.phone,
+          email: registrationData.email,
+          password: registrationData.password, // Already hashed
+          latitude: registrationData.latitude,
+          longitude: registrationData.longitude,
+          logged_in_at: now,
+          logged_out_at: null,
+          is_online: true,
+          last_seen_at: null,
+        };
+
+        if (registrationData.bio) {
+          userData.bio = registrationData.bio;
+          userData.bio_moderation_status = "pending";
+        }
+
+        if (registrationData.photo) {
+          userData.photo = registrationData.photo;
+          userData.photo_moderation_status = "pending";
+        }
+
+        if (registrationData.birth_year !== null && registrationData.birth_year !== undefined) {
+          userData.birth_year = registrationData.birth_year;
+          const { computeAgeFromBirthYear } = require("../utils/userProfile");
+          const computedAge = computeAgeFromBirthYear(registrationData.birth_year);
+          if (computedAge !== null) {
+            userData.age = computedAge;
+          }
+        }
+
+        const user = await PublicUser.create(userData);
+        const newUserId = user.id;
+
+        // Update metadata to include userId
+        metadata.userId = newUserId;
+
+        // Sync badges based on user category and plan
+        const normalizedPlan = normalizePlan(metadata.plan);
+        if (normalizedPlan) {
+          if (user.category === "Regular") {
+            if (normalizedPlan === "Gold") {
+              await syncGoldVerificationBadge(user);
+            }
+          } else if (PREMIUM_CATEGORIES.includes(user.category)) {
+            await syncPremiumBadge(user);
+          }
+        }
+
+        // Set userId for subscription creation
+        userId = newUserId;
+      } catch (createErr) {
+        console.error("Failed to create user during subscription verification:", createErr);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to create account after payment verification",
+        });
+      }
+    }
 
     if (!userId) {
       console.error(
@@ -463,6 +850,28 @@ exports.verifySubscription = async (req, res) => {
           "[SSE] Error sending subscription:updated event:",
           sseError
         );
+      }
+    }
+
+    // If this was a registration flow, return token and user data
+    if (registrationData && metadata.userId) {
+      const user = await PublicUser.findByPk(metadata.userId);
+      if (user) {
+        const token = signPublicJwt(user.id);
+        const formattedUser = formatUserForResponse(user);
+
+        return res.status(200).json({
+          success: true,
+          message: "Registration and subscription payment successful",
+          data: {
+            subscription,
+            token,
+            user: {
+              ...formattedUser,
+              password: undefined,
+            },
+          },
+        });
       }
     }
 

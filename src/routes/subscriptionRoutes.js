@@ -6,7 +6,15 @@ const {
   optionalPublicAuth,
 } = require("../middleware/publicAuth");
 const { authenticateAdmin } = require("../middleware/auth");
+const { uploadProfileImage } = require("../middleware/upload");
 const ctrl = require("../controllers/subscriptionController");
+
+// Initialize a Paystack subscription payment (Silver/Gold) with registration data
+router.post(
+  "/paystack/initialize-with-registration",
+  uploadProfileImage,
+  ctrl.initializeSubscriptionWithRegistration
+);
 
 // Initialize a Paystack subscription payment (Silver/Gold)
 router.post(
