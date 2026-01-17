@@ -2300,6 +2300,170 @@ exports.featuredBoosts = async (req, res) => {
   }
 };
 
+// Admin endpoint to update public user profile (including fake profiles)
+exports.adminUpdatePublicUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      username,
+      email,
+      phone,
+      gender,
+      category,
+      bio,
+      birth_year,
+      age,
+      county,
+      latitude,
+      longitude,
+      isVerified,
+    } = req.body;
+
+    // Find the user
+    const user = await PublicUser.findByPk(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prepare update data
+    const updateData = {};
+
+    if (name !== undefined) updateData.name = name;
+    if (username !== undefined) {
+      const normalizedUsername = username.trim();
+      if (normalizedUsername) {
+        // Check if username is already taken by another user
+        const existingUser = await PublicUser.findOne({
+          where: {
+            username: normalizedUsername,
+            id: { [Op.ne]: id },
+          },
+        });
+        if (existingUser) {
+          return res.status(409).json({
+            success: false,
+            message: "Username already taken",
+          });
+        }
+        updateData.username = normalizedUsername;
+      }
+    }
+    if (email !== undefined) {
+      // Check if email is already taken by another user
+      const existingUser = await PublicUser.findOne({
+        where: {
+          email,
+          id: { [Op.ne]: id },
+        },
+      });
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          message: "Email already taken",
+        });
+      }
+      updateData.email = email;
+    }
+    if (phone !== undefined) {
+      // Validate phone if provided
+      if (phone) {
+        const {
+          valid: isPhoneValid,
+          normalized: validatedPhone,
+          message: phoneValidationMessage,
+        } = validatePhoneNumber(phone);
+        if (!isPhoneValid) {
+          return res.status(400).json({
+            success: false,
+            message: phoneValidationMessage,
+          });
+        }
+        updateData.phone = validatedPhone;
+      } else {
+        updateData.phone = phone;
+      }
+    }
+    if (gender !== undefined) updateData.gender = gender || null;
+    if (category !== undefined) {
+      const ALLOWED_CATEGORIES = [
+        "Regular",
+        "Sugar Mummy",
+        "Sponsor",
+        "Ben 10",
+        "Urban Chics",
+      ];
+      if (ALLOWED_CATEGORIES.includes(category)) {
+        updateData.category = category;
+      }
+    }
+    if (bio !== undefined) updateData.bio = bio || null;
+    if (county !== undefined) updateData.county = county || null;
+    if (isVerified !== undefined) updateData.isVerified = isVerified === true;
+
+    // Handle birth year and age
+    if (birth_year !== undefined && birth_year !== null && birth_year !== "") {
+      const birthYearValue = parseInt(birth_year, 10);
+      updateData.birth_year = birthYearValue;
+      const computedAge = computeAgeFromBirthYear(birthYearValue);
+      if (computedAge !== null) {
+        updateData.age = computedAge;
+      }
+    } else if (age !== undefined && age !== null && age !== "") {
+      const numericAge = parseInt(age, 10);
+      if (!Number.isNaN(numericAge) && numericAge > 0) {
+        const currentYear = new Date().getFullYear();
+        const birthYearValue = currentYear - numericAge;
+        updateData.birth_year = birthYearValue;
+        updateData.age = numericAge;
+      }
+    }
+
+    // Handle location
+    if (latitude !== undefined) updateData.latitude = latitude || null;
+    if (longitude !== undefined) updateData.longitude = longitude || null;
+
+    // Handle profile photo upload
+    if (req.file) {
+      const photoPath = `profiles/${req.file.filename}`;
+      updateData.photo = photoPath;
+      // Auto-approve photo updates for fake profiles, otherwise keep existing status
+      if (user.is_fake) {
+        updateData.photo_moderation_status = "approved";
+      }
+    }
+
+    // Update the user
+    await user.update(updateData);
+
+    // Format and return updated user
+    const formattedUser = formatUserForResponse(user);
+    await addBadgeTypeToUser(formattedUser, user);
+
+    return res.json({
+      success: true,
+      message: "User profile updated successfully",
+      data: {
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("admin update public user error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update user profile",
+      error: err.message,
+    });
+  }
+};
+
 // Admin endpoint to update fake profile photo
 exports.adminUpdateFakeProfilePhoto = async (req, res) => {
   try {

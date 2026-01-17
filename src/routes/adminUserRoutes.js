@@ -19,6 +19,7 @@ const {
   adminList,
   adminGetById,
   adminCreateFakeUser,
+  adminUpdatePublicUser,
   adminUpdateFakeProfilePhoto,
 } = require("../controllers/publicUserController");
 const {
@@ -65,6 +66,14 @@ router.get("/dashboard/stats", authenticateAdmin, getDashboardStats);
 router.get("/dashboard/analytics", authenticateAdmin, analytics);
 router.get("/public-users", authenticateAdmin, adminList);
 router.get("/public-users/:id", authenticateAdmin, adminGetById);
+router.put(
+  "/public-users/:id",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  uploadProfileImage,
+  handleUploadError,
+  adminUpdatePublicUser
+);
 router.post(
   "/public-users/create-fake",
   authenticateAdmin,
