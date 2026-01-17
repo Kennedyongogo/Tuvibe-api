@@ -1981,12 +1981,8 @@ exports.list = async (req, res) => {
       where.longitude = { [Op.ne]: null };
     }
 
-    // Exclude fake profiles from regular browsing (they're shown separately)
-    // Check if is_fake is not true (covers both false and null)
-    where[Op.or] = [
-      ...(where[Op.or] || []),
-      { is_fake: { [Op.ne]: true } },
-    ];
+    // Include fake profiles in Explore - they appear like regular profiles
+    // (No exclusion filter - fake profiles are mixed with real profiles)
 
     const limit = Math.min(Number(pageSize) || 20, 50);
     const offset = (Number(page) - 1) * limit;
