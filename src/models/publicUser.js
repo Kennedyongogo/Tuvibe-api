@@ -130,6 +130,12 @@ module.exports = (sequelize) => {
         defaultValue: false,
         field: "is_verified",
       },
+      is_fake: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+        field: "is_fake",
+        comment: "Marks admin-created fake profiles for display and testing",
+      },
       latitude: {
         type: DataTypes.DECIMAL(10, 8),
         allowNull: true,

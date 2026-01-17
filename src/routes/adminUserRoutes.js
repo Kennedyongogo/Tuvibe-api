@@ -19,6 +19,7 @@ const {
   adminList,
   adminGetById,
   adminCreateFakeUser,
+  adminUpdateFakeProfilePhoto,
 } = require("../controllers/publicUserController");
 const {
   adminCreateTestimonial,
@@ -71,6 +72,14 @@ router.post(
   uploadProfileImage,
   handleUploadError,
   adminCreateFakeUser
+);
+router.put(
+  "/public-users/:id/fake-profile-photo",
+  authenticateAdmin,
+  requireAdminOrHigher,
+  uploadProfileImage,
+  handleUploadError,
+  adminUpdateFakeProfilePhoto
 );
 router.post(
   "/testimonials/create-fake",

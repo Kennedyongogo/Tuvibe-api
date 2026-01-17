@@ -190,13 +190,20 @@ exports.initializeSubscriptionWithRegistration = async (req, res) => {
     // Validate registration data
     const normalizedUsername =
       typeof username === "string" ? username.trim() : "";
-    if (!name || !normalizedUsername || !phone || !email || !password) {
+    
+    // Check if this is a Google registration
+    const isGoogleRegistration = req.body.google_id && req.body.auth_provider === "google";
+    
+    // For Google users, password is optional (null)
+    if (!name || !normalizedUsername || !phone || !email || (!isGoogleRegistration && !password)) {
       return res
         .status(400)
         .json({ success: false, message: "Missing required registration fields" });
     }
 
-    if (!req.file) {
+    // For Google users, photo is optional (they have Google picture)
+    // For regular registration, photo is required
+    if (!isGoogleRegistration && !req.file) {
       return res.status(400).json({
         success: false,
         message: "Profile image is required to register.",
@@ -274,10 +281,16 @@ exports.initializeSubscriptionWithRegistration = async (req, res) => {
         ? category
         : "Regular";
 
-    // Store photo path
-    const photoPath = req.file ? `profiles/${req.file.filename}` : null;
+    // Store photo path (for Google users, use Google picture URL if provided)
+    let photoPath = null;
+    if (req.file) {
+      photoPath = `profiles/${req.file.filename}`;
+    } else if (isGoogleRegistration && req.body.google_picture_url) {
+      // Store Google picture URL for later download/storage
+      photoPath = req.body.google_picture_url;
+    }
 
-    // Prepare registration data for metadata (exclude password - we'll hash it later)
+    // Prepare registration data for metadata
     const registrationData = {
       name,
       username: normalizedUsername,
@@ -285,13 +298,20 @@ exports.initializeSubscriptionWithRegistration = async (req, res) => {
       category: normalizedCategory,
       phone: normalizedPhone,
       email,
-      password: await bcrypt.hash(password, 10), // Hash password before storing in metadata
+      password: isGoogleRegistration ? null : (await bcrypt.hash(password, 10)), // No password for Google users
       latitude,
       longitude,
       bio,
       photo: photoPath,
       birth_year: birthYear,
     };
+
+    // Add Google-specific fields if this is a Google registration
+    if (isGoogleRegistration) {
+      registrationData.google_id = req.body.google_id;
+      registrationData.auth_provider = "google";
+      registrationData.google_picture_url = req.body.google_picture_url;
+    }
 
     let paystackAmount;
     try {
@@ -710,9 +730,25 @@ exports.verifySubscription = async (req, res) => {
           userData.bio_moderation_status = "pending";
         }
 
+        // Handle photo - could be file path or Google picture URL
         if (registrationData.photo) {
-          userData.photo = registrationData.photo;
+          // Check if it's a Google picture URL (starts with http)
+          if (registrationData.photo.startsWith("http")) {
+            // Store Google picture URL directly (you may want to download and store it later)
+            userData.photo = registrationData.photo;
+          } else {
+            // It's a file path
+            userData.photo = registrationData.photo;
+          }
           userData.photo_moderation_status = "pending";
+        }
+
+        // Add Google-specific fields if present
+        if (registrationData.google_id) {
+          userData.google_id = registrationData.google_id;
+        }
+        if (registrationData.auth_provider) {
+          userData.auth_provider = registrationData.auth_provider;
         }
 
         if (registrationData.birth_year !== null && registrationData.birth_year !== undefined) {

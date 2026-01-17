@@ -569,6 +569,85 @@ exports.verifyOtp = async (req, res) => {
   }
 };
 
+// Verify Google token without creating account (for registration with subscription)
+exports.verifyGoogleToken = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google ID token is required",
+      });
+    }
+
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    let ticket;
+    try {
+      ticket = await client.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid Google token",
+      });
+    }
+
+    const payload = ticket.getPayload();
+    const { sub: googleId, email, name, picture } = payload;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email not provided by Google",
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = await PublicUser.findOne({
+      where: {
+        [Op.or]: [{ google_id: googleId }, { email }],
+      },
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "An account with this email already exists. Please sign in instead.",
+      });
+    }
+
+    // Generate a unique username from email
+    const baseUsername = email.split("@")[0];
+    let username = baseUsername;
+    let counter = 1;
+    while (await PublicUser.findOne({ where: { username } })) {
+      username = `${baseUsername}${counter}`;
+      counter++;
+    }
+
+    // Return Google user data (without creating account)
+    return res.json({
+      success: true,
+      data: {
+        googleId,
+        email,
+        name: name || email.split("@")[0],
+        picture: picture || null,
+        username,
+        authProvider: "google",
+      },
+    });
+  } catch (err) {
+    console.error("verifyGoogleToken error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Google token verification failed",
+    });
+  }
+};
+
 exports.googleAuth = async (req, res) => {
   try {
     const { idToken } = req.body;
@@ -1902,6 +1981,13 @@ exports.list = async (req, res) => {
       where.longitude = { [Op.ne]: null };
     }
 
+    // Exclude fake profiles from regular browsing (they're shown separately)
+    // Check if is_fake is not true (covers both false and null)
+    where[Op.or] = [
+      ...(where[Op.or] || []),
+      { is_fake: { [Op.ne]: true } },
+    ];
+
     const limit = Math.min(Number(pageSize) || 20, 50);
     const offset = (Number(page) - 1) * limit;
 
@@ -2055,12 +2141,19 @@ exports.featured = async (req, res) => {
   try {
     const now = new Date();
     const where = {
-      [Op.or]: [
-        Sequelize.where(activeBoostExistsLiteral, true),
-        Sequelize.where(boostHistoryExistsLiteral, true),
-        { isVerified: true },
+      [Op.and]: [
+        {
+          [Op.or]: [
+            Sequelize.where(activeBoostExistsLiteral, true),
+            Sequelize.where(boostHistoryExistsLiteral, true),
+            { isVerified: true },
+          ],
+        },
+        // Exclude fake profiles from featured listings (they're shown separately)
+        { is_fake: { [Op.ne]: true } },
       ],
     };
+
     // Guest gating: exclude premium categories for guests
     if (!req.publicUserId) {
       where.category = { [Op.eq]: "Regular" };
@@ -2207,6 +2300,66 @@ exports.featuredBoosts = async (req, res) => {
   }
 };
 
+// Admin endpoint to update fake profile photo
+exports.adminUpdateFakeProfilePhoto = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verify it's a fake profile
+    const user = await PublicUser.findByPk(id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.is_fake) {
+      return res.status(400).json({
+        success: false,
+        message: "This endpoint can only update fake profiles",
+      });
+    }
+
+    // Check if photo file was uploaded
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Profile image is required",
+      });
+    }
+
+    // Update photo
+    const photoPath = `profiles/${req.file.filename}`;
+    await user.update({
+      photo: photoPath,
+      photo_moderation_status: "approved", // Auto-approve fake profile photos
+    });
+
+    const formattedUser = formatUserForResponse(user);
+    await addBadgeTypeToUser(formattedUser, user);
+
+    return res.json({
+      success: true,
+      message: "Fake profile photo updated successfully",
+      data: {
+        user: {
+          ...formattedUser,
+          password: undefined,
+          otp: undefined,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("admin update fake profile photo error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update fake profile photo",
+      error: err.message,
+    });
+  }
+};
+
 // Admin endpoint to list all public users without restrictions
 exports.adminList = async (req, res) => {
   try {
@@ -2215,6 +2368,7 @@ exports.adminList = async (req, res) => {
       category,
       isVerified,
       online,
+      is_fake,
       q,
       page = 1,
       pageSize = 10,
@@ -2224,13 +2378,51 @@ exports.adminList = async (req, res) => {
     if (category) where.category = category;
     if (isVerified !== undefined) where.isVerified = isVerified === "true";
     if (online !== undefined) where.is_online = online === "true";
-    if (q) {
+    
+    // Handle fake profile filtering
+    if (is_fake !== undefined) {
+      // Explicit filter requested
+      if (is_fake === "true") {
+        where.is_fake = true;
+      } else if (is_fake === "false") {
+        // Explicitly exclude fake profiles
+        where[Op.or] = [
+          { is_fake: false },
+          { is_fake: null },
+        ];
+      }
+    } else {
+      // Default behavior: exclude fake profiles unless explicitly requested
+      // This ensures Public Users tab only shows real users
       where[Op.or] = [
-        { name: { [Op.iLike]: `%${q}%` } },
-        { county: { [Op.iLike]: `%${q}%` } },
-        { email: { [Op.iLike]: `%${q}%` } },
-        { phone: { [Op.iLike]: `%${q}%` } },
+        { is_fake: false },
+        { is_fake: null },
       ];
+    }
+    if (q) {
+      // If we already have Op.or (from is_fake filter), use Op.and to combine
+      if (where[Op.or]) {
+        const existingConditions = where[Op.or];
+        where[Op.and] = [
+          { [Op.or]: existingConditions },
+          {
+            [Op.or]: [
+              { name: { [Op.iLike]: `%${q}%` } },
+              { county: { [Op.iLike]: `%${q}%` } },
+              { email: { [Op.iLike]: `%${q}%` } },
+              { phone: { [Op.iLike]: `%${q}%` } },
+            ],
+          },
+        ];
+        delete where[Op.or];
+      } else {
+        where[Op.or] = [
+          { name: { [Op.iLike]: `%${q}%` } },
+          { county: { [Op.iLike]: `%${q}%` } },
+          { email: { [Op.iLike]: `%${q}%` } },
+          { phone: { [Op.iLike]: `%${q}%` } },
+        ];
+      }
     }
 
     const limit = Math.min(Number(pageSize) || 10, 100);
@@ -2429,6 +2621,7 @@ exports.adminCreateFakeUser = async (req, res) => {
       is_online: true, // Same as registration
       last_seen_at: null, // Same as registration
       isVerified: isVerified || false,
+      is_fake: true, // Mark as fake profile
     };
 
     // Handle bio - same as registration
@@ -2491,6 +2684,62 @@ exports.adminCreateFakeUser = async (req, res) => {
       success: false,
       message: "Failed to create fake user profile",
       error: err.message,
+    });
+  }
+};
+
+// Get fake profiles for public display (to entice users)
+exports.getFakeProfiles = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 6, 20); // Default 6, max 20
+
+    // Fetch fake profiles with approved photos only
+    const fakeProfiles = await PublicUser.findAll({
+      where: {
+        is_fake: true,
+        // Only show profiles with approved photos
+        photo_moderation_status: "approved",
+        // Ensure photo exists
+        photo: { [Op.ne]: null },
+      },
+      attributes: {
+        exclude: [
+          "password",
+          "otp",
+          "phone",
+          "email",
+          "bio",
+          "latitude",
+          "longitude",
+          "token_balance",
+        ], // Exclude sensitive data
+        include: ["id", "name", "username", "photo", "category", "age"],
+      },
+      order: [[Sequelize.literal("random()"), "ASC"]], // Random order for variety
+      limit,
+    });
+
+    // Format response - only return display-safe data
+    const formatted = fakeProfiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      username: profile.username,
+      photo: profile.photo,
+      category: profile.category,
+      age: profile.age,
+      // Note: Names and photos will be blurred on frontend
+    }));
+
+    return res.json({
+      success: true,
+      data: formatted,
+      count: formatted.length,
+    });
+  } catch (err) {
+    console.error("getFakeProfiles error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch fake profiles",
     });
   }
 };

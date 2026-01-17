@@ -15,6 +15,7 @@ const {
 router.post("/register", uploadProfileImage, handleUploadError, ctrl.register);
 router.post("/login", ctrl.login);
 router.post("/auth/google", ctrl.googleAuth);
+router.post("/auth/google/verify", ctrl.verifyGoogleToken); // Verify token without creating account
 router.post("/request-otp", ctrl.requestOtp);
 router.post("/verify-otp", ctrl.verifyOtp);
 router.post("/forgot-password", ctrl.forgotPassword);
@@ -52,6 +53,7 @@ router.get("/wallet", authenticatePublic, ctrl.getWallet);
 // Browse & Featured (guest-friendly)
 router.get("/featured/boosts", optionalPublicAuth, ctrl.featuredBoosts);
 router.get("/featured", optionalPublicAuth, ctrl.featured);
+router.get("/fake-profiles", ctrl.getFakeProfiles); // Public endpoint for fake profiles display
 router.get("/", optionalPublicAuth, ctrl.list);
 
 // Profile viewing (requires authentication - use /users prefix to avoid conflicts)
