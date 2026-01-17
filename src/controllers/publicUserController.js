@@ -2402,7 +2402,10 @@ exports.adminUpdatePublicUser = async (req, res) => {
     }
     if (bio !== undefined) updateData.bio = bio || null;
     if (county !== undefined) updateData.county = county || null;
-    if (isVerified !== undefined) updateData.isVerified = isVerified === true;
+    if (isVerified !== undefined) {
+      // Handle both string and boolean (FormData sends strings)
+      updateData.isVerified = isVerified === true || isVerified === "true";
+    }
 
     // Handle birth year and age
     if (birth_year !== undefined && birth_year !== null && birth_year !== "") {
